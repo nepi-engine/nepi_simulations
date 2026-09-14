@@ -407,7 +407,22 @@ launch_targets:
     # see that target's own check_installed_command comment for the full
     # "nepi_drones deleted and re-cloned nepi_engine_ws only" scenario this
     # catches.
-    check_installed_command: "bash -lc \"test -d $HOME/nepi_engine_ws/nepi_drones/sim_container && source /opt/ros/noetic/setup.bash && command -v gzserver > /dev/null && command -v roscore > /dev/null && command -v sim_vehicle.py > /dev/null && python3 -c 'import pymavlink' > /dev/null 2>&1 && test -f $HOME/ardupilot_gazebo/worlds/iris_arducopter_cmac.world\""
+    #
+    # Also checks for gz_reset_listener.py and sim_launch_listener.py under
+    # ~/.local/bin -- both scripts' own docstrings say they're "installed to
+    # ~/.local/bin" on the dev VM, but that has only ever been a comment,
+    # never an automated step (no install_command/manual_fallback_commands
+    # entry here ever copied them there). Found live 2026-09-14 on this exact
+    # dev VM: neither file actually existed at that path, so the
+    # launch_command's own `nohup python3 -u $HOME/.local/bin/
+    # gz_reset_listener.py ...` line failed with a plain "No such file or
+    # directory" into a background log nobody was watching -- RESET_SIM's
+    # socket connect then failed silently every time, so only the
+    # force-disarm half of reset_sim() ever ran; the Gazebo pose reset half
+    # never did. Checking for both here surfaces that as a normal
+    # "Simulator Not Installed" state instead of a RESET_SIM command that
+    # quietly does half of what it claims.
+    check_installed_command: "bash -lc \"test -d $HOME/nepi_engine_ws/nepi_drones/sim_container && source /opt/ros/noetic/setup.bash && command -v gzserver > /dev/null && command -v roscore > /dev/null && command -v sim_vehicle.py > /dev/null && python3 -c 'import pymavlink' > /dev/null 2>&1 && test -f $HOME/ardupilot_gazebo/worlds/iris_arducopter_cmac.world && test -f $HOME/.local/bin/gz_reset_listener.py && test -f $HOME/.local/bin/sim_launch_listener.py\""
     # Added (2026-09-02) -- until now this target had no install_command at
     # all (unlike every other target) because ArduPilot SITL setup is a
     # multi-step build from source with no honest single package-manager
@@ -514,7 +529,11 @@ launch_targets:
       make -j$(nproc);
       sudo make install;
       mkdir -p $HOME/ardupilot_gazebo/worlds;
-      cp -f $HOME/nepi_engine_ws/nepi_drones/sim_container/worlds/iris_arducopter_cmac.world $HOME/ardupilot_gazebo/worlds/iris_arducopter_cmac.world
+      cp -f $HOME/nepi_engine_ws/nepi_drones/sim_container/worlds/iris_arducopter_cmac.world $HOME/ardupilot_gazebo/worlds/iris_arducopter_cmac.world;
+      mkdir -p $HOME/.local/bin;
+      cp -f $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/gz_reset_listener.py $HOME/.local/bin/gz_reset_listener.py;
+      cp -f $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/sim_launch_listener.py $HOME/.local/bin/sim_launch_listener.py;
+      chmod +x $HOME/.local/bin/gz_reset_listener.py $HOME/.local/bin/sim_launch_listener.py
       '
     # Copy of install_command's own steps, laid out one command per line for
     # the RUI to show verbatim as a copy-paste fallback if auto-install ever
@@ -545,6 +564,10 @@ launch_targets:
       sudo make install
       mkdir -p ~/ardupilot_gazebo/worlds
       cp ~/nepi_engine_ws/nepi_drones/sim_container/worlds/iris_arducopter_cmac.world ~/ardupilot_gazebo/worlds/
+      mkdir -p ~/.local/bin
+      cp ~/nepi_engine_ws/nepi_drones/sim_container/scripts/gz_reset_listener.py ~/.local/bin/
+      cp ~/nepi_engine_ws/nepi_drones/sim_container/scripts/sim_launch_listener.py ~/.local/bin/
+      chmod +x ~/.local/bin/gz_reset_listener.py ~/.local/bin/sim_launch_listener.py
     # Same fragile-YAML-folding caution as gazebo_rover's own launch_command
     # above applies here verbatim -- every line stays at the SAME
     # indentation on purpose. Verify with
