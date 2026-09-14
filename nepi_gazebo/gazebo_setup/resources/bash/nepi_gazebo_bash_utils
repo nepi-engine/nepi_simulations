@@ -17,28 +17,6 @@
 ## - mailto:nepi@numurus.com
 ##
 
-# gazebo_setup's own copy of the handful of nepi_bash_utils functions its
-# scripts actually call (is_valid_internet, ask_yes_no, update_yaml_value).
-# The upstream nepi_setup repo's nepi_bash_utils is 5000+ lines covering
-# docker, hardware, and other concerns this repo has no use for -- trimmed
-# here rather than vendored whole so there is nothing to keep in sync that
-# gazebo_setup doesn't actually call. Named nepi_gazebo_bash_utils (not
-# nepi_bash_utils) so it's never mistaken for -- or silently shadowed by --
-# the real nepi_setup one on a machine that has both.
-#
-# update_yaml_value below is also simplified relative to upstream: the
-# original dispatches to a Python helper when NEPI_MODE=REMOTE (a device
-# driving another device's file over a transport). Everything in
-# gazebo_setup only ever edits a YAML file on the same machine the script
-# runs on, so that branch (and the helper script it calls) is dropped --
-# this always shells out to `yq` directly.
-#
-# nepistorage (and the NEPI_MODE/NEPI_USER/NEPI_IP/pingn it depends on) is
-# ported verbatim from upstream, REMOTE branch included: the Gazebo VM/host
-# is a separate machine from the NEPI device, so reaching the device's
-# storage share over the network is a real use case here, unlike
-# update_yaml_value's REMOTE path. NEPI_IP is upstream's own placeholder
-# default -- override it for the actual NEPI device on your network.
 
 if [[ ! -n $CONFIG_USER ]]; then
     CONFIG_USER=$(id -un)
@@ -110,6 +88,33 @@ function update_yaml_value(){
 export -f update_yaml_value
 
 
+function sync_yaml_files(){
+    SOURCE_FILE=$1
+    TARGET_FILE=$2
+    REPLACE_ENTRIES=0
+
+    if [[ ! -f "$SOURCE_FILE" ]]; then
+        echo "Source file does not exist: ${SOURCE_FILE}"
+        return 1
+    fi
+
+    if [[ ! -f "$TARGET_FILE" ]]; then
+        echo "Target file does not exist: ${TARGET_FILE}"
+        return 1
+    fi
+
+    eval_cmd="success=$(python3 ${BASH_FOLDER}/nepi_utils/sync_yaml_files.py $SOURCE_FILE $TARGET_FILE $REPLACE_ENTRIES)"
+    eval "$eval_cmd"
+    success=$(echo ${success})
+
+    if [[ "$success" -ne 1 ]]; then
+        echo "Success = ${success}"
+        return 1
+    fi
+}
+export -f sync_yaml_files
+
+
 function nepistorage() {
 
   shpassword=$1
@@ -170,3 +175,17 @@ function nepistorage() {
 }
 
 export -f nepistorage
+
+
+function nepi_gazebo_start(){
+    gazebo_resources_folder=${NEPI_GAZEBO_RESOURCES_FOLDER:-$(dirname "${BASH_FOLDER}")}
+    gazebo_start_script=${gazebo_resources_folder}/config/nepi_gazebo_start.sh
+
+    if [[ ! -f "$gazebo_start_script" ]]; then
+        echo "nepi_gazebo_start.sh not found at: ${gazebo_start_script}"
+        return 1
+    fi
+
+    bash "$gazebo_start_script" "$@"
+}
+export -f nepi_gazebo_start

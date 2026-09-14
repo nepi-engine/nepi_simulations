@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(bash -n /home/nepidev/gazebo_setup/resources/gazebo/nepi_gazebo.sh)",
-      "Bash(bash -n /home/nepidev/gazebo_setup/resources/gazebo/nepi_gazebo_start.sh)",
-      "Bash(python3 -c \"import yaml; yaml.safe_load\\(open\\('/home/nepidev/gazebo_setup/resources/simulation/SIM_CFG/nepi_gazebo_config.yaml'\\)\\)\")"
-    ]
-  }
-}

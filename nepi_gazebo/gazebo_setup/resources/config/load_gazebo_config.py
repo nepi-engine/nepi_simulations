@@ -18,10 +18,9 @@
 ##
 
 
-# Generic YAML config loader: reads key/values from CONFIG_FILE (falling
-# back to CONFIG_FILE + ".bak" for any keys missing after a failed or
-# partial load) and prints them as KEY=VALUE pairs for a calling shell
-# to eval/export.
+# Gazebo config loader: reads key/values from CONFIG_FILE (falling back to
+# CONFIG_FILE + ".bak" for any keys missing after a failed or partial load)
+# and prints them as KEY=VALUE pairs for load_gazebo_config.sh to eval/export.
 #
 # success codes (last "success=N" entry wins when the caller exports
 # every entry in order):
@@ -29,7 +28,7 @@
 #   2 = CONFIG_FILE was missing/invalid but the backup fully covered it
 #   0 = nothing usable could be loaded
 #
-# Usage: load_config.py <config_file>
+# Usage: load_gazebo_config.py <config_file>
 
 
 import os
@@ -80,8 +79,12 @@ else:
     else:
         print_list.append("success=0")
 
-print_string="\'"
+# One KEY=VALUE per line, not space-joined onto a single line -- a value
+# with spaces in it (GAZEBO_LAST_ERROR messages, in practice) would
+# otherwise be indistinguishable from several separate entries once
+# load_gazebo_config.sh re-splits this output on whitespace. Order is still
+# significant: load_gazebo_config.sh exports each line in the order printed
+# here, so a later duplicate key (e.g. a second "success=") still wins, same
+# as before.
 for entry in print_list:
-    print_string += entry + " "
-print_string += "\'"
-print(print_string)
+    print(entry)

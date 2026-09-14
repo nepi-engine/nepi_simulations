@@ -18,23 +18,18 @@
 ##
 
 
-# Generic config loader: exports the key/values of a YAML config file as
+# Gazebo config loader: exports the key/values of nepi_gazebo_config.yaml as
 # shell environment variables, with automatic backup-on-success and
 # restore-from-backup-on-failure.
 #
-# Usage: source load_config.sh [CONFIG_FILE]
-#   CONFIG_FILE defaults to the one *.yaml file (excluding *.bak) found
-#   alongside this script.
+# Usage: source load_gazebo_config.sh [CONFIG_FILE]
+#   CONFIG_FILE defaults to nepi_gazebo_config.yaml alongside this script.
 
 CONFIG_FOLDER=$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 
-LOAD_SCRIPT=${CONFIG_FOLDER}/load_config.py
+LOAD_SCRIPT=${CONFIG_FOLDER}/load_gazebo_config.py
 
-if [[ -n "$1" ]]; then
-    CONFIG_FILE="$1"
-else
-    CONFIG_FILE=$(ls ${CONFIG_FOLDER}/*.yaml 2>/dev/null | grep -v '\.bak$' | head -n 1)
-fi
+CONFIG_FILE="${1:-${CONFIG_FOLDER}/nepi_gazebo_config.yaml}"
 BACKUP_FILE="${CONFIG_FILE}.bak"
 
 if [[ -z "$CONFIG_FILE" || ! -f "$CONFIG_FILE" ]]; then
@@ -50,11 +45,16 @@ fi
 echo "Loading config file ${CONFIG_FILE}"
 
 success=0
-eval_cmd="load_vals=$(python3 $LOAD_SCRIPT $CONFIG_FILE)"  #2>/dev/null"
-eval "$eval_cmd"
-for entry in $load_vals; do
-    export ${entry}
-done
+# One KEY=VALUE per line from load_gazebo_config.py (see its own comment) --
+# read line-by-line via process substitution (not a `| while`, which would
+# run the loop in a subshell and lose $success once it exits) and export
+# each as a single argument, splitting only on the FIRST "=" so a value
+# containing spaces (GAZEBO_LAST_ERROR messages, in practice) survives
+# intact instead of being word-split into several bogus entries.
+while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    export "${entry%%=*}=${entry#*=}"
+done < <(python3 $LOAD_SCRIPT $CONFIG_FILE)
 echo "Load returned success=${success}"
 
 if [[ $success -eq 2 ]]; then
@@ -70,11 +70,10 @@ elif [[ $success -ne 1 ]]; then
         echo "Backup file exists, restoring config file"
         cp "$BACKUP_FILE" "$CONFIG_FILE"
         success=0
-        eval_cmd="load_vals=$(python3 $LOAD_SCRIPT $CONFIG_FILE)"
-        eval "$eval_cmd"
-        for entry in $load_vals; do
-            export ${entry}
-        done
+        while IFS= read -r entry; do
+            [[ -z "$entry" ]] && continue
+            export "${entry%%=*}=${entry#*=}"
+        done < <(python3 $LOAD_SCRIPT $CONFIG_FILE)
         echo "Backup load returned success=${success}"
         if [[ "$success" -ne 1 ]]; then
             echo "Failed to load config file from backup"

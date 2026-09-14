@@ -1,0 +1,117 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="default">
+    <gui>
+      <camera name="user_camera">
+        <pose>-5 0 1 0 0.2 0</pose>
+      </camera>
+    </gui>
+    <physics type="ode">
+      <ode>
+        <solver>
+          <type>quick</type>
+          <iters>100</iters>
+          <sor>1.0</sor>
+        </solver>
+        <constraints>
+          <cfm>0.0</cfm>
+          <erp>0.2</erp>
+          <contact_max_correcting_vel>0.1</contact_max_correcting_vel>
+          <contact_surface_layer>0.0</contact_surface_layer>
+        </constraints>
+      </ode>
+      <real_time_update_rate>-1</real_time_update_rate>
+      <!--<max_step_size>0.0020</max_step_size>-->
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>5000 5000</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>100</mu>
+                <mu2>50</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="runway">
+          <pose>000 0 0.005 0 0 0</pose>
+          <cast_shadows>false</cast_shadows>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>1829 45</size>
+            </plane>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Runway</name>
+            </script>
+          </material>
+        </visual>
+
+        <visual name="grass">
+          <pose>0 0 -0.1 0 0 0</pose>
+          <cast_shadows>false</cast_shadows>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>5000 5000</size>
+            </plane>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grass</name>
+            </script>
+          </material>
+        </visual>
+
+      </link>
+    </model>
+
+    <model name="iris_demo">
+      <include>
+        <uri>model://iris_with_ardupilot</uri>
+      </include>
+    </model>
+
+    <!--
+      NEPI addition (not upstream khancyr/ardupilot_gazebo): camera_rig
+      (robot view) and camera_rig_chase (scene/chase view), both
+      repositioned every frame by camera_rig_controller_ardupilot.py via
+      /gazebo/set_model_state, see sim_container/models/camera_rig/
+      model.config. No longer included statically here (removed 2026-09-09,
+      while adding live FOV support): FOV is baked into each rig's own SDF
+      at spawn time, so a live FOV change needs to respawn them (delete
+      then spawn_sdf_model), and a name that originates from a world-file
+      include tag hits a real Gazebo caching quirk on that first respawn,
+      the exact same one sim_bridge_node.py's own ROVER_MODEL_NAME_CUSTOM
+      already works around for the rover (confirmed live 2026-09-09:
+      leaving these two include tags in place while also respawning under
+      the same names left both image topics silently dead after the first
+      FOV change, a textbook symptom of that quirk). Cleanest fix is for
+      Python to own spawning both from the start, so neither name is ever
+      include-derived in the first place, camera_rig_controller_
+      ardupilot.py's own __init__ now spawns both directly via
+      /gazebo/spawn_sdf_model (retrying if gzserver's spawn service isn't
+      up yet, same pattern as ai_targeting_controller_ardupilot.py's own
+      chair spawn), and every respawn after that reuses the same name
+      safely, same as the rover's own custom name does.
+    -->
+  </world>
+</sdf>
