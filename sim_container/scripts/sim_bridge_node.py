@@ -57,16 +57,14 @@
 #           file's own module docstring for the full reasoning), leaving
 #           nothing left for this node to forward but the offsets.
 #   out -- {"type":"image","camera":"robot_color"|"scene_color"|"robot_depth"|
-#           "scene_depth"|"robot_depth_map"|"scene_depth_map","format":
-#           "jpeg"|"png16","data":"<base64>","stamp":...} relayed straight
-#           through from camera_rig_controller.py's own six always-live
-#           /camera_rig/*/image_compressed topics (it owns the Gazebo-facing
-#           compression/throttling; this node only owns the network relay,
-#           same division of labor as the existing odom -> telemetry path).
-#           The "camera" field is what lets rbx_sim_node.py route each frame
-#           to the matching one of its own published ROS topics; "format"
-#           tells it how to decode ("png16" for the two depth_map feeds --
-#           16-bit millimeters -- vs plain "jpeg" for the other four).
+#           "scene_depth","format":"jpeg","data":"<base64>","stamp":...}
+#           relayed straight through from camera_rig_controller.py's own
+#           four always-live /camera_rig/*/image_compressed topics (it owns
+#           the Gazebo-facing compression/throttling; this node only owns
+#           the network relay, same division of labor as the existing odom
+#           -> telemetry path). The "camera" field is what lets
+#           rbx_sim_node.py route each frame to the matching one of its own
+#           published ROS topics.
 #
 # RESET_SIM go-action addition: a third line shape, {"type":"reset"} in, no
 # reply out. Unlike ArduPilot's RESET_SIM (which reaches gz_reset_listener.py
@@ -154,16 +152,14 @@ DEVICE_HOST = os.environ.get('NEPI_DEVICE_SSH_HOST', 'nepi')
 BRIDGE_RECONNECT_INTERVAL_SEC = 2.0
 TELEMETRY_RATE_HZ = 10.0
 
-# camera_rig_controller.py's six always-live compressed topics (color +
-# colorized depth view + raw depth map, for each of robot/scene) -- see the
-# module docstring above for why all are relayed simultaneously now instead
-# of a depth_map_enabled toggle swapping one topic's content.
+# camera_rig_controller.py's four always-live compressed topics (color +
+# colorized depth view, for each of robot/scene) -- see the module
+# docstring above for why all are relayed simultaneously now instead of a
+# depth_map_enabled toggle swapping one topic's content.
 ROBOT_COLOR_COMPRESSED_TOPIC = '/camera_rig/robot_color/image_compressed'
 SCENE_COLOR_COMPRESSED_TOPIC = '/camera_rig/scene_color/image_compressed'
 ROBOT_DEPTH_COMPRESSED_TOPIC = '/camera_rig/robot_depth/image_compressed'
 SCENE_DEPTH_COMPRESSED_TOPIC = '/camera_rig/scene_depth/image_compressed'
-ROBOT_DEPTH_MAP_COMPRESSED_TOPIC = '/camera_rig/robot_depth_map/image_compressed'
-SCENE_DEPTH_MAP_COMPRESSED_TOPIC = '/camera_rig/scene_depth_map/image_compressed'
 
 # RESET_SIM target: generic_rover.world's containing <model> name and its
 # (unmodified, default) spawn pose -- world origin, identity orientation.
@@ -386,10 +382,6 @@ class SimBridgeNode:
                                             self.robotDepthImageCompressedCb)
     self.scene_depth_sub = rospy.Subscriber(SCENE_DEPTH_COMPRESSED_TOPIC, CompressedImage,
                                             self.sceneDepthImageCompressedCb)
-    self.robot_depth_map_sub = rospy.Subscriber(ROBOT_DEPTH_MAP_COMPRESSED_TOPIC, CompressedImage,
-                                                self.robotDepthMapImageCompressedCb)
-    self.scene_depth_map_sub = rospy.Subscriber(SCENE_DEPTH_MAP_COMPRESSED_TOPIC, CompressedImage,
-                                                self.sceneDepthMapImageCompressedCb)
     self.model_state_pub = rospy.Publisher(MODEL_STATE_TOPIC, ModelState, queue_size=1)
 
     # Camera-sensor-death watchdog -- see cameraWatchdogCb's own comment for
@@ -616,23 +608,14 @@ class SimBridgeNode:
   def sceneDepthImageCompressedCb(self, msg):
     self.imageCompressedCb(msg, 'scene_depth')
 
-  def robotDepthMapImageCompressedCb(self, msg):
-    self.imageCompressedCb(msg, 'robot_depth_map')
-
-  def sceneDepthMapImageCompressedCb(self, msg):
-    self.imageCompressedCb(msg, 'scene_depth_map')
-
   def imageCompressedCb(self, msg, camera):
     # Relayed straight through to whichever client is connected right now;
     # dropped silently if none is (matches the existing "no client" behavior
     # of sendVelocityCmd's counterpart on the remote-device side). "camera"
-    # tags which of the six always-live feeds this frame came from, so
+    # tags which of the four always-live feeds this frame came from, so
     # rbx_sim_node.py can route it to the matching one of its own published
-    # ROS topics. "format" is relayed too now (camera_rig_controller.py's own
-    # msg.format, 'jpeg' for color/depth-view, 'png16' for the raw depth
-    # map) -- the two depth_map feeds need different decoding on the
-    # receiving end than a plain JPEG, so the tag has to travel with the
-    # frame rather than being assumed from "camera" alone.
+    # ROS topics. "format" is relayed too (camera_rig_controller.py's own
+    # msg.format, always 'jpeg' now that the raw depth_map feeds are gone).
     line = {
       'type': 'image',
       'camera': camera,

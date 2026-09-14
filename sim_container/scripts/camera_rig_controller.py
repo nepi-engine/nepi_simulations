@@ -55,25 +55,14 @@
 # Color and colorized-depth are both always-live now (2026-08-20), same
 # "always live, separately named" reasoning that already applies to
 # robot/scene above: color=robot_color/scene_color, colorized depth
-# (close=blue, far=red, JET)=robot_depth/scene_depth -- four persistent
-# topics instead of a depth_map_enabled toggle that swapped one topic's
-# content. Raw depth (actual float32 meters, for downstream processing, not
-# viewing) rides the same relay as a THIRD pair -- robot_depth_map/
-# scene_depth_map -- PNG16-encoded (millimeters, uint16) rather than JPEG:
-# lossy-but-adequate (1mm precision) and small enough to fit the existing
-# CompressedImage relay unchanged, instead of inventing a new wire message
-# shape just for this.
+# (close=blue, far=red, JET)=robot_depth/scene_depth. The raw-depth
+# (float32 meters, for downstream processing) robot_depth_map/scene_depth_map
+# pair removed entirely (requested live 2026-09-14: "unness and dont do
+# anything") -- these were never a viewing feed and had no processing
+# consumer either, just extra bandwidth and two extra options in the RUI's
+# image-source picker.
 IMAGE_RATE_HZ = 10.0
-# Raw depth is meaningfully bigger per-frame than a JPEG color/depth-view
-# frame even after PNG compression, and nothing needs it at video rate --
-# it is explicitly for later use, not live viewing (that's what
-# robot_depth/scene_depth above already cover). A slower, separate rate
-# keeps it from competing with the two viewable feeds over the tunnel.
-DEPTH_MAP_RATE_HZ = 2.0
 JPEG_QUALITY = 65
-# Millimeters, uint16 -- caps at 65.535m, comfortably past this world's
-# actual usable depth range (see DEPTH_MAX_RANGE_M below).
-DEPTH_MAP_MAX_MM = 65535
 
 import threading
 
@@ -137,9 +126,9 @@ class CameraRigController:
     self.latest_robot_view_depth = None
     self.latest_scene_view_depth = None
 
-    # Six persistent topics: color + colorized-depth-for-viewing + raw-depth-
-    # for-later-use, for each of the two views. All always live -- no more
-    # depth_map_enabled toggle deciding which of two things one topic shows.
+    # Four persistent topics: color + colorized-depth-for-viewing, for each
+    # of the two views. All always live -- no depth_map_enabled toggle
+    # deciding which of two things one topic shows.
     self.robot_color_pub = rospy.Publisher('/camera_rig/robot_color/image_compressed',
                                            CompressedImage, queue_size = 1)
     self.scene_color_pub = rospy.Publisher('/camera_rig/scene_color/image_compressed',
@@ -148,10 +137,6 @@ class CameraRigController:
                                            CompressedImage, queue_size = 1)
     self.scene_depth_pub = rospy.Publisher('/camera_rig/scene_depth/image_compressed',
                                            CompressedImage, queue_size = 1)
-    self.robot_depth_map_pub = rospy.Publisher('/camera_rig/robot_depth_map/image_compressed',
-                                               CompressedImage, queue_size = 1)
-    self.scene_depth_map_pub = rospy.Publisher('/camera_rig/scene_depth_map/image_compressed',
-                                               CompressedImage, queue_size = 1)
 
     self.robot_view_sub = rospy.Subscriber(ROBOT_VIEW_IMAGE_TOPIC, Image,
                                            self.robotViewImageCb)
@@ -163,13 +148,10 @@ class CameraRigController:
                                                  self.sceneViewDepthCb)
 
     self.image_timer = rospy.Timer(rospy.Duration(1.0 / IMAGE_RATE_HZ), self.imagePublishCb)
-    self.depth_map_timer = rospy.Timer(rospy.Duration(1.0 / DEPTH_MAP_RATE_HZ),
-                                       self.depthMapPublishCb)
 
     rospy.loginfo(PKG_NAME + ": Camera view relay initialized")
     rospy.loginfo(PKG_NAME + ": Relaying " + ROBOT_VIEW_IMAGE_TOPIC + " and " +
-                  SCENE_VIEW_IMAGE_TOPIC + " (color + colorized depth + raw depth map, "
-                  "each its own topic)")
+                  SCENE_VIEW_IMAGE_TOPIC + " (color + colorized depth, each its own topic)")
 
   def run(self):
     """Block until ROS shutdown, servicing the image relay timers."""
@@ -223,20 +205,6 @@ class CameraRigController:
               (255.0 / (DEPTH_MAX_RANGE_M - DEPTH_MIN_RANGE_M))).astype(np.uint8)
     return cv2.applyColorMap(scaled, cv2.COLORMAP_JET)
 
-  def depthToMillimeterPng(self, depth_img):
-    """Encode a 32FC1-meters depth frame as a 16-bit PNG in millimeters --
-    lossy at sub-mm precision but small enough to reuse the existing
-    CompressedImage relay, unlike the raw float32 array."""
-    if depth_img is None:
-      return None
-    depth_img = np.nan_to_num(depth_img, nan = 0.0, posinf = 0.0, neginf = 0.0)
-    depth_mm = np.clip(depth_img * 1000.0, 0, DEPTH_MAP_MAX_MM).astype(np.uint16)
-    ok, encoded = cv2.imencode('.png', depth_mm)
-    if not ok:
-      rospy.logwarn_throttle(5.0, PKG_NAME + ": Depth map PNG encode failed")
-      return None
-    return encoded
-
   def imagePublishCb(self, timer_event):
     with self.image_lock:
       robot_img = self.latest_robot_view_img
@@ -251,13 +219,6 @@ class CameraRigController:
                           [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
     self.encodeAndPublish(self.depthToColorImg(scene_depth), self.scene_depth_pub, '.jpg',
                           [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-
-  def depthMapPublishCb(self, timer_event):
-    with self.image_lock:
-      robot_depth = self.latest_robot_view_depth
-      scene_depth = self.latest_scene_view_depth
-    self.publishEncoded(self.depthToMillimeterPng(robot_depth), self.robot_depth_map_pub, 'png16')
-    self.publishEncoded(self.depthToMillimeterPng(scene_depth), self.scene_depth_map_pub, 'png16')
 
   def encodeAndPublish(self, cv_img, pub, ext, params):
     if cv_img is None:

@@ -1028,6 +1028,6 @@ launch_targets:
   # launch_command wired through this launcher (install-check only), and
   # both were judged not useful enough to keep offered as selectable
   # simulators. Their own bridge scripts under sim_container/bridges/
-  # (pybullet/, wpilib/) are left in place, just no longer reachable from
-  # the Simulator selector. See docs/MULTI_SIMULATOR_INTEGRATION_PLAN.md
-  # Phase 6 for WPILib's prior context if this is ever revisited.
+  # (pybullet/, wpilib/) were deleted entirely 2026-09-14 (not being
+  # implemented) -- see docs/MULTI_SIMULATOR_INTEGRATION_PLAN.md Phase 6
+  # for WPILib's historical context, if ever needed for reference.

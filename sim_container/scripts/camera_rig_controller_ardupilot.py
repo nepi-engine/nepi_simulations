@@ -123,8 +123,6 @@ SCENE_VIEW_DEPTH_TOPIC = '/camera_rig_chase/camera/depth/image_raw'
 # convention and reasoning as camera_rig_controller.py's own constants.
 DEPTH_MIN_RANGE_M = 0.3
 DEPTH_MAX_RANGE_M = 15.0
-# Millimeters, uint16 -- see camera_rig_controller.py's own constant.
-DEPTH_MAP_MAX_MM = 65535
 
 # Pose-follow update rate: matches the rover controller's own rationale --
 # smooth relative to the ~1-10 Hz MAVLink telemetry rate elsewhere in this
@@ -133,11 +131,6 @@ CONTROL_RATE_HZ = 20.0
 # Modest frame rate/quality per the same tunnel-bandwidth convention used by
 # every prior phase of this feature.
 IMAGE_RATE_HZ = 7.0
-# Raw depth map is for later processing, not live viewing (that's what the
-# colorized robot_depth/scene_depth feeds are for) -- same reasoning as
-# camera_rig_controller.py's own DEPTH_MAP_RATE_HZ for keeping it off the
-# tunnel's video-rate budget.
-DEPTH_MAP_RATE_HZ = 2.0
 JPEG_QUALITY = 60
 
 # Camera bridge TCP server: next free port in the 902x sim-utility block
@@ -353,8 +346,6 @@ class CameraRigControllerArdupilot:
 
     self.control_timer = rospy.Timer(rospy.Duration(1.0 / CONTROL_RATE_HZ), self.controlCb)
     self.image_timer = rospy.Timer(rospy.Duration(1.0 / IMAGE_RATE_HZ), self.imagePublishCb)
-    self.depth_map_timer = rospy.Timer(rospy.Duration(1.0 / DEPTH_MAP_RATE_HZ),
-                                       self.depthMapPublishCb)
 
     self.server_thread = threading.Thread(target = self.bridgeServerLoop)
     self.server_thread.daemon = True
@@ -433,19 +424,6 @@ class CameraRigControllerArdupilot:
     scaled = ((clipped - DEPTH_MIN_RANGE_M) *
               (255.0 / (DEPTH_MAX_RANGE_M - DEPTH_MIN_RANGE_M))).astype(np.uint8)
     return cv2.applyColorMap(scaled, cv2.COLORMAP_JET)
-
-  def depthToMillimeterPng(self, depth_img):
-    """Encode a 32FC1-meters depth frame as a 16-bit PNG in millimeters --
-    see camera_rig_controller.py's own version of this method."""
-    if depth_img is None:
-      return None
-    depth_img = np.nan_to_num(depth_img, nan = 0.0, posinf = 0.0, neginf = 0.0)
-    depth_mm = np.clip(depth_img * 1000.0, 0, DEPTH_MAP_MAX_MM).astype(np.uint16)
-    ok, encoded = cv2.imencode('.png', depth_mm)
-    if not ok:
-      rospy.logwarn_throttle(5.0, PKG_NAME + ": Depth map PNG encode failed")
-      return None
-    return encoded
 
   def controlCb(self, timer_event):
     with self.pose_lock:
@@ -554,13 +532,6 @@ class CameraRigControllerArdupilot:
                        [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY], 'jpeg')
     self.encodeAndSend(self.depthToColorImg(scene_depth), 'scene_depth', '.jpg',
                        [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY], 'jpeg')
-
-  def depthMapPublishCb(self, timer_event):
-    with self.image_lock:
-      robot_depth = self.latest_robot_view_depth
-      scene_depth = self.latest_scene_view_depth
-    self.sendEncoded(self.depthToMillimeterPng(robot_depth), 'robot_depth_map', 'png16')
-    self.sendEncoded(self.depthToMillimeterPng(scene_depth), 'scene_depth_map', 'png16')
 
   def encodeAndSend(self, cv_img, camera, ext, params, fmt):
     if cv_img is None:
