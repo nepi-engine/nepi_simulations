@@ -167,6 +167,16 @@ class AiTargetingControllerArdupilot:
     self.drone_z = 0.0
     self.drone_yaw = 0.0
     self.have_pose = False
+    # Set only once spawnTargetModel() actually confirms the model exists in
+    # Gazebo -- computeTargetReport() must not report a detection for a
+    # target that hasn't been spawned yet. Found live: starting the follow
+    # script BEFORE Gazebo/SITL come up meant have_pose flipped True the
+    # instant the drone's own pose first appeared in /gazebo/model_states,
+    # and computeTargetReport() (driven purely by currentTargetPosition()'s
+    # analytic clock, not by anything Gazebo-side) immediately reported a
+    # valid in-range detection for a chair that was never actually spawned --
+    # the drone would fly toward/descend on an invisible target.
+    self.target_spawned = False
 
     self.client_lock = threading.Lock()
     self.client_conn = None
@@ -232,6 +242,7 @@ class AiTargetingControllerArdupilot:
       resp = spawn(TARGET_MODEL_NAME, target_sdf, '', initial_pose, 'world')
       if resp.success:
         rospy.loginfo(PKG_NAME + ": Target model spawned")
+        self.target_spawned = True
         return True
       if 'already exist' in resp.status_message.lower():
         # Already-spawned from a prior run of this node is the common case
@@ -239,6 +250,7 @@ class AiTargetingControllerArdupilot:
         # existing model is reused as-is.
         rospy.loginfo(PKG_NAME + ": Target model already exists, reusing: " +
                       resp.status_message)
+        self.target_spawned = True
         return True
       rospy.logwarn(PKG_NAME + ": Target model spawn failed, will retry: " + resp.status_message)
       return False
@@ -380,7 +392,7 @@ class AiTargetingControllerArdupilot:
     Y right, Z down; azimuth positive = right of nose, elevation positive =
     target above the drone's current altitude."""
     with self.pose_lock:
-      if not self.have_pose:
+      if not self.have_pose or not self.target_spawned:
         return TARGET_NAME, -999.0, -999.0, -999.0, False
       drone_x = self.drone_x
       drone_y = self.drone_y
