@@ -78,6 +78,16 @@ def main():
     reset_world = rospy.ServiceProxy(RESET_WORLD_SERVICE, Empty)
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Explicit None, NOT left as the default -- rospy.init_node() above sets
+    # a PROCESS-GLOBAL socket.setdefaulttimeout(60), which this socket would
+    # otherwise silently inherit. Found live 2026-09-15: this listener kept
+    # crashing with "socket.timeout: timed out" on srv.accept() after ~60s
+    # idle (no reset requested in that window), meaning Reset Sim would work
+    # right after this script started but silently stop working again a
+    # minute later with nothing to explain it. Same gotcha SitlMavlinkRelay/
+    # CameraBridgeDeviceRelay's own srv.settimeout(None) already guards
+    # against in rbx_ardupilot_node.py -- this script just never had it.
+    srv.settimeout(None)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(('0.0.0.0', port))  # 0.0.0.0: direct-LAN reachable, see sim_bridge_node.py's own bind comment
     srv.listen(1)

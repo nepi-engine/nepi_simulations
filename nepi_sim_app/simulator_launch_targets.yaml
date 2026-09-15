@@ -680,7 +680,8 @@ launch_targets:
       python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/mavlink_relay_vm.py --device-host {device_bridge_host} < /dev/null > /tmp/sim_connector_quadcopter_mavlink_relay_launch.log 2>&1 & MAVRELAY_PID=$!;
       python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/camera_bridge_relay_vm.py --device-host {device_bridge_host} < /dev/null > /tmp/sim_connector_quadcopter_camera_bridge_relay_launch.log 2>&1 & CAMRELAY_PID=$!;
       python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/ai_targeting_relay_vm.py --device-host {device_bridge_host} < /dev/null > /tmp/sim_connector_quadcopter_ai_targeting_relay_launch.log 2>&1 & AITARGETRELAY_PID=$!;
-      wait $SITL_PID $GZ_PID $CAM_PID $AI_TARGET_PID $BRIDGE_PID $MAVRELAY_PID $CAMRELAY_PID $AITARGETRELAY_PID
+      python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/sim_control_relay_vm.py --device-host {device_bridge_host} < /dev/null > /tmp/sim_connector_quadcopter_sim_control_relay_launch.log 2>&1 & SIMCTRLRELAY_PID=$!;
+      wait $SITL_PID $GZ_PID $CAM_PID $AI_TARGET_PID $BRIDGE_PID $MAVRELAY_PID $CAMRELAY_PID $AITARGETRELAY_PID $SIMCTRLRELAY_PID
       '
     # Same "Use Existing" override as gazebo_rover's own attach_launch_command
     # -- skips ONLY the gzserver refuse-guard and the `rosrun gazebo_ros
@@ -714,7 +715,8 @@ launch_targets:
       python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/mavlink_relay_vm.py --device-host {device_bridge_host} < /dev/null > /tmp/sim_connector_quadcopter_mavlink_relay_launch.log 2>&1 & MAVRELAY_PID=$!;
       python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/camera_bridge_relay_vm.py --device-host {device_bridge_host} < /dev/null > /tmp/sim_connector_quadcopter_camera_bridge_relay_launch.log 2>&1 & CAMRELAY_PID=$!;
       python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/ai_targeting_relay_vm.py --device-host {device_bridge_host} < /dev/null > /tmp/sim_connector_quadcopter_ai_targeting_relay_launch.log 2>&1 & AITARGETRELAY_PID=$!;
-      wait $CAM_PID $AI_TARGET_PID $SITL_PID $BRIDGE_PID $MAVRELAY_PID $CAMRELAY_PID $AITARGETRELAY_PID
+      python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/sim_control_relay_vm.py --device-host {device_bridge_host} < /dev/null > /tmp/sim_connector_quadcopter_sim_control_relay_launch.log 2>&1 & SIMCTRLRELAY_PID=$!;
+      wait $CAM_PID $AI_TARGET_PID $SITL_PID $BRIDGE_PID $MAVRELAY_PID $CAMRELAY_PID $AITARGETRELAY_PID $SIMCTRLRELAY_PID
       '
     # Belt-and-suspenders like gazebo_rover's own stop_command: the pgid kill
     # is the primary mechanism, but sim_vehicle.py is a much more complex
