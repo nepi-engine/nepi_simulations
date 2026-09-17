@@ -88,6 +88,13 @@ launch_targets:
     host: "127.0.0.1"
     ssh_user: "suraj"
     ssh_port: 12222
+    # Shared-storage transport: the VM's own nepi-vm-command-watcher.service
+    # (sim_container/scripts/vm_command_watcher.py) polls this instance id's
+    # mailbox under VM_COMMANDS_STORAGE_DIR instead of this target being
+    # dialed over SSH -- no reverse tunnel involved. See
+    # simulator_launcher.py's _dispatch_shared_storage docstring.
+    connection_mode: "shared_storage"
+    os_instance_id: "os_dev_vm_1"
     # Confirmed installed/working on the dev VM this was built against.
     # check_installed_command only checks for the two binaries the
     # launch_command below actually needs -- not a full ROS/Gazebo
@@ -400,6 +407,13 @@ launch_targets:
     host: "127.0.0.1"
     ssh_user: "suraj"
     ssh_port: 12222
+    # Shared-storage transport: the VM's own nepi-vm-command-watcher.service
+    # (sim_container/scripts/vm_command_watcher.py) polls this instance id's
+    # mailbox under VM_COMMANDS_STORAGE_DIR instead of this target being
+    # dialed over SSH -- no reverse tunnel involved. See
+    # simulator_launcher.py's _dispatch_shared_storage docstring.
+    connection_mode: "shared_storage"
+    os_instance_id: "os_dev_vm_1"
     # Checks for ArduCopter SITL + pymavlink + the ardupilot_gazebo world
     # file, IN ADDITION to the plain gzserver/roscore check gazebo_rover's
     # own command uses -- this target needs all of it, not just Gazebo
@@ -795,6 +809,13 @@ launch_targets:
     host: "127.0.0.1"
     ssh_user: "suraj"
     ssh_port: 12222
+    # Shared-storage transport: the VM's own nepi-vm-command-watcher.service
+    # (sim_container/scripts/vm_command_watcher.py) polls this instance id's
+    # mailbox under VM_COMMANDS_STORAGE_DIR instead of this target being
+    # dialed over SSH -- no reverse tunnel involved. See
+    # simulator_launcher.py's _dispatch_shared_storage docstring.
+    connection_mode: "shared_storage"
+    os_instance_id: "os_dev_vm_1"
     # nepi_drones existence checked first, same as gazebo_rover -- see that
     # target's own check_installed_command comment for the full "nepi_drones
     # deleted and re-cloned nepi_engine_ws only" scenario this catches.
@@ -923,6 +944,13 @@ launch_targets:
     host: "127.0.0.1"
     ssh_user: "suraj"
     ssh_port: 12222
+    # Shared-storage transport: the VM's own nepi-vm-command-watcher.service
+    # (sim_container/scripts/vm_command_watcher.py) polls this instance id's
+    # mailbox under VM_COMMANDS_STORAGE_DIR instead of this target being
+    # dialed over SSH -- no reverse tunnel involved. See
+    # simulator_launcher.py's _dispatch_shared_storage docstring.
+    connection_mode: "shared_storage"
+    os_instance_id: "os_dev_vm_1"
     # nepi_drones existence checked first, same as gazebo_rover.
     check_installed_command: "bash -lc \"test -d $HOME/nepi_engine_ws/nepi_drones/sim_container && command -v webots > /dev/null\""
     # Same install steps as webots_rover -- it's the same Webots binary,
@@ -978,6 +1006,13 @@ launch_targets:
     host: "127.0.0.1"
     ssh_user: "suraj"
     ssh_port: 12222
+    # Shared-storage transport: the VM's own nepi-vm-command-watcher.service
+    # (sim_container/scripts/vm_command_watcher.py) polls this instance id's
+    # mailbox under VM_COMMANDS_STORAGE_DIR instead of this target being
+    # dialed over SSH -- no reverse tunnel involved. See
+    # simulator_launcher.py's _dispatch_shared_storage docstring.
+    connection_mode: "shared_storage"
+    os_instance_id: "os_dev_vm_1"
     # nepi_drones existence checked first, same as gazebo_rover/webots_rover.
     check_installed_command: "bash -lc \"test -d $HOME/nepi_engine_ws/nepi_drones/sim_container && python3 -c 'import mujoco' > /dev/null 2>&1\""
     # Widened (2026-08-26), same reasoning as gazebo_rover/webots_rover's own

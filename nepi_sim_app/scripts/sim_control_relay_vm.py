@@ -45,6 +45,11 @@ TRIGGER_MARKER = b'TRIGGER\n'
 # (label, local_host, local_port, device_port) -- local_port/device_port
 # match RESET_SIM_DEVICE_RELAY/TEARDOWN_DEVICE_RELAY/START_TRIGGER_DEVICE_RELAY
 # in rbx_ardupilot_node.py exactly.
+# start_trigger's local_port is the DEVICE's own 9037, NOT 9030 -- 9030 on
+# the device collides with sim_connector_app_node.py's own unrelated
+# FACTORY_LISTEN_PORT. The device_port (9036) still dials into
+# ai_targeting_controller_ardupilot.py's real listener on THIS VM's port
+# 9030, unchanged -- only the intermediate device-local leg moved.
 RELAYS = [
     ('reset', '127.0.0.1', 9021, 9034),
     ('teardown', '127.0.0.1', 9029, 9035),
