@@ -269,12 +269,24 @@ launch_targets:
     # whatever gzserver comes up next off the same persistent roscore and
     # silently re-adds its chair target, even to a plain rover world that
     # never asked for it).
+    # GAZEBO_MASTER_URI pinned to this target's own dedicated port (2026-09-18,
+    # "new sim should literally make a new window... so there's two or more
+    # gazebo windows") -- gazebo_quadcopter is pinned to a DIFFERENT port
+    # (11346, see that target's own launch_command), so the two Gazebo
+    # targets can now run concurrently instead of colliding on the shared
+    # default 11345. The refuse-guard below checks THIS port specifically,
+    # not "any gzserver anywhere" -- a quadcopter already running on 11346
+    # must never block a rover launch on 11345, and vice versa. Re-launching
+    # THIS SAME target while it's already up must still refuse (that case is
+    # exactly what redeploy_simulator's stop-then-launch and Use Existing
+    # exist for), which checking this specific port still catches correctly.
     launch_command: >-
       bash -lc '
       source /opt/ros/noetic/setup.bash;
       . $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/nepi_sim_display_env.sh;
       export GAZEBO_MODEL_PATH=$HOME/nepi_engine_ws/nepi_drones/sim_container/models:$GAZEBO_MODEL_PATH;
-      if pgrep -x gzserver > /dev/null; then echo "REFUSING TO LAUNCH: a gzserver is already running on this host. Gazebo instances collide on port 11345 -- a second one would silently attach to the running world instead of loading generic_rover.world. Stop the existing simulation first." >&2; exit 3; fi;
+      export GAZEBO_MASTER_URI=http://localhost:11345;
+      if timeout 1 bash -c "cat < /dev/null > /dev/tcp/127.0.0.1/11345" 2>/dev/null; then echo "REFUSING TO LAUNCH: a gzserver is already running on this target's own port (11345). Stop the existing rover simulation first." >&2; exit 3; fi;
       pkill -f "[a]i_targeting_controller_ardupilot.py" 2>/dev/null;
       echo $$ > /tmp/sim_connector_launch.pgid;
       rostopic list > /dev/null 2>&1 || {{ nohup roscore < /dev/null > /tmp/sim_connector_roscore_launch.log 2>&1 & until rostopic list > /dev/null 2>&1; do sleep 1; done; }};
@@ -282,7 +294,7 @@ launch_targets:
       sleep 8;
       python3 -u $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/sim_heartbeat_listener.py 9022 < /dev/null > /tmp/sim_heartbeat_listener.log 2>&1 & HB_PID=$!;
       python3 -u $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/camera_rig_controller.py < /dev/null > /tmp/camera_rig_controller.log 2>&1 & CAM_PID=$!;
-      python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/sim_bridge_node.py < /dev/null > /tmp/sim_bridge_node.log 2>&1 & BRIDGE_PID=$!;
+      python3 -u $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/sim_bridge_node.py < /dev/null > /tmp/sim_bridge_node.log 2>&1 & BRIDGE_PID=$!;
       wait $GZ_PID $HB_PID $CAM_PID $BRIDGE_PID
       '
     # Used instead of launch_command when the operator explicitly chose
@@ -311,7 +323,7 @@ launch_targets:
       rostopic list > /dev/null 2>&1 || {{ nohup roscore < /dev/null > /tmp/sim_connector_roscore_launch.log 2>&1 & until rostopic list > /dev/null 2>&1; do sleep 1; done; }};
       python3 -u $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/sim_heartbeat_listener.py 9022 < /dev/null > /tmp/sim_heartbeat_listener.log 2>&1 & HB_PID=$!;
       python3 -u $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/camera_rig_controller.py < /dev/null > /tmp/camera_rig_controller.log 2>&1 & CAM_PID=$!;
-      python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/sim_bridge_node.py < /dev/null > /tmp/sim_bridge_node.log 2>&1 & BRIDGE_PID=$!;
+      python3 -u $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/sim_bridge_node.py < /dev/null > /tmp/sim_bridge_node.log 2>&1 & BRIDGE_PID=$!;
       wait $HB_PID $CAM_PID $BRIDGE_PID
       '
     # Kills this launch's own process group PLUS an explicit, scoped
@@ -347,7 +359,16 @@ launch_targets:
     # pattern text), killing this script before the trailing `; true` even
     # runs. Same reasoning applied to the new gzserver pkill below
     # ("[g]zserver", not "gzserver").
-    stop_command: "bash -lc 'f=/tmp/sim_connector_launch.pgid; if [ -f $f ]; then kill -- -$(cat $f) 2>/dev/null; rm -f $f; fi; pkill -f [s]im_bridge_node.py 2>/dev/null; pkill -f [s]im_heartbeat_listener.py 2>/dev/null; pkill -f [c]amera_rig_controller.py 2>/dev/null; pkill -f \"[g]zserver .*generic_rover\\.world\" 2>/dev/null; pkill -x gzclient 2>/dev/null; true'"
+    # pkill -x gzclient (unscoped -- ANY gzclient window, not just this
+    # target's own) removed 2026-09-18: with gazebo_quadcopter now able to
+    # run concurrently on its own GAZEBO_MASTER_URI/ROS_MASTER_URI (see that
+    # target's own launch_command comment), stopping the rover must not also
+    # kill the quadcopter's window. The pgid-based kill just above already
+    # reaches this target's own gzclient (rosrun gazebo_ros gazebo starts
+    # gzserver AND gzclient as children of this same launch's process group,
+    # confirmed via ps -o pid,pgid) -- the scoped gzserver pkill right after
+    # is the only belt-and-suspenders still needed for the server half.
+    stop_command: "bash -lc 'f=/tmp/sim_connector_launch.pgid; if [ -f $f ]; then kill -- -$(cat $f) 2>/dev/null; rm -f $f; fi; pkill -f [s]im_bridge_node.py 2>/dev/null; pkill -f [s]im_heartbeat_listener.py 2>/dev/null; pkill -f [c]amera_rig_controller.py 2>/dev/null; pkill -f \"[g]zserver .*generic_rover\\.world\" 2>/dev/null; true'"
     # Verifies THIS target's own world is up, not just that some gazebo is.
     # Two earlier versions were both false-positive-prone: process existence
     # alone missed gzserver spinning on "No ROS master", and a bare
@@ -674,16 +695,34 @@ launch_targets:
     # port 9021 to connect to and failed silently. Same self-match class as
     # the ai_targeting_controller_ardupilot.py pkill guard just above, which
     # was already bracket-escaped for the same reason.
+    # Own dedicated ROS master (11312, not the shared default 11311) as well
+    # as its own GAZEBO_MASTER_URI (11346) -- 2026-09-18, same "two or more
+    # gazebo windows" request as gazebo_rover's own launch_command comment.
+    # The port alone is not enough: gzserver's own ROS API plugin
+    # (libgazebo_ros_api_plugin.so) advertises plain, un-namespaced names
+    # like /gazebo/spawn_sdf_model -- and camera_rig_controller_ardupilot.py/
+    # ai_targeting_controller_ardupilot.py both call those exact same
+    # absolute names too (confirmed by reading both scripts). Two gzserver
+    # instances sharing ONE roscore would silently steal that registration
+    # from each other (whichever advertises last "wins" the name), so rover
+    # and quadcopter each need their OWN roscore, not just their own Gazebo
+    # transport port. rover's own roscore stays on the untouched default
+    # (11311) -- nothing about that path changes. Every OTHER command this
+    # target dispatches (ready_check_command, stop_command) also exports
+    # this same ROS_MASTER_URI, since each is a separate ssh/shared-storage
+    # invocation that does not inherit this bash process's own environment.
     launch_command: >-
       bash -lc '
       source /opt/ros/noetic/setup.bash;
       . $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/nepi_sim_display_env.sh;
       export GAZEBO_MODEL_PATH=$HOME/nepi_engine_ws/nepi_drones/sim_container/models:$HOME/ardupilot_gazebo/models:$GAZEBO_MODEL_PATH;
-      if pgrep -x gzserver > /dev/null; then echo "REFUSING TO LAUNCH: a gzserver is already running on this host. A second one would silently attach to the running world instead of loading iris_arducopter_cmac.world. Stop the existing simulation first." >&2; exit 3; fi;
+      export ROS_MASTER_URI=http://localhost:11312;
+      export GAZEBO_MASTER_URI=http://localhost:11346;
+      if timeout 1 bash -c "cat < /dev/null > /dev/tcp/127.0.0.1/11346" 2>/dev/null; then echo "REFUSING TO LAUNCH: a gzserver is already running on this target's own port (11346). Stop the existing quadcopter simulation first." >&2; exit 3; fi;
       if timeout 1 bash -c "cat < /dev/null > /dev/tcp/127.0.0.1/5760" 2>/dev/null; then echo "REFUSING TO LAUNCH: ArduCopter SITL already appears to be running on this host (port 5760 is taken -- possibly the separate RBX ArduPilot SITL dev flow, see nepi_sitl_dev_env.sh). Only one instance can own the default MAVLink ports at a time. Stop it first." >&2; exit 3; fi;
       pkill -f "[a]i_targeting_controller_ardupilot.py" 2>/dev/null;
       echo $$ > /tmp/sim_connector_quadcopter_launch.pgid;
-      rostopic list > /dev/null 2>&1 || {{ nohup roscore < /dev/null > /tmp/sim_connector_quadcopter_roscore_launch.log 2>&1 & until rostopic list > /dev/null 2>&1; do sleep 1; done; }};
+      rostopic list > /dev/null 2>&1 || {{ nohup roscore -p 11312 < /dev/null > /tmp/sim_connector_quadcopter_roscore_launch.log 2>&1 & until rostopic list > /dev/null 2>&1; do sleep 1; done; }};
       pgrep -f "[g]z_reset_listener.py 9021" > /dev/null || {{ nohup python3 -u $HOME/.local/bin/gz_reset_listener.py 9021 < /dev/null > /tmp/sim_connector_quadcopter_gz_reset_listener_launch.log 2>&1 & disown; }};
       sim_vehicle.py -v ArduCopter -f gazebo-iris --out=tcpin:0.0.0.0:5771 --out=tcpin:0.0.0.0:5772 --mavproxy-args="--daemon" < /dev/null > /tmp/sim_connector_quadcopter_sitl_launch.log 2>&1 & SITL_PID=$!;
       rosrun gazebo_ros gazebo $HOME/ardupilot_gazebo/worlds/iris_arducopter_cmac.world < /dev/null > /tmp/sim_connector_quadcopter_gazebo_launch.log 2>&1 & GZ_PID=$!;
@@ -717,10 +756,12 @@ launch_targets:
       source /opt/ros/noetic/setup.bash;
       . $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/nepi_sim_display_env.sh;
       export GAZEBO_MODEL_PATH=$HOME/nepi_engine_ws/nepi_drones/sim_container/models:$HOME/ardupilot_gazebo/models:$GAZEBO_MODEL_PATH;
+      export ROS_MASTER_URI=http://localhost:11312;
+      export GAZEBO_MASTER_URI=http://localhost:11346;
       if timeout 1 bash -c "cat < /dev/null > /dev/tcp/127.0.0.1/5760" 2>/dev/null; then echo "REFUSING TO LAUNCH: ArduCopter SITL already appears to be running on this host (port 5760 is taken -- possibly the separate RBX ArduPilot SITL dev flow, see nepi_sitl_dev_env.sh). Only one instance can own the default MAVLink ports at a time. Stop it first." >&2; exit 3; fi;
       pkill -f "[a]i_targeting_controller_ardupilot.py" 2>/dev/null;
       echo $$ > /tmp/sim_connector_quadcopter_launch.pgid;
-      rostopic list > /dev/null 2>&1 || {{ nohup roscore < /dev/null > /tmp/sim_connector_quadcopter_roscore_launch.log 2>&1 & until rostopic list > /dev/null 2>&1; do sleep 1; done; }};
+      rostopic list > /dev/null 2>&1 || {{ nohup roscore -p 11312 < /dev/null > /tmp/sim_connector_quadcopter_roscore_launch.log 2>&1 & until rostopic list > /dev/null 2>&1; do sleep 1; done; }};
       pgrep -f "[g]z_reset_listener.py 9021" > /dev/null || {{ nohup python3 -u $HOME/.local/bin/gz_reset_listener.py 9021 < /dev/null > /tmp/sim_connector_quadcopter_gz_reset_listener_launch.log 2>&1 & disown; }};
       python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/camera_rig_controller_ardupilot.py < /dev/null > /tmp/sim_connector_quadcopter_camera_rig_launch.log 2>&1 & CAM_PID=$!;
       python3 $HOME/nepi_engine_ws/nepi_drones/sim_container/scripts/ai_targeting_controller_ardupilot.py < /dev/null > /tmp/sim_connector_quadcopter_ai_targeting_launch.log 2>&1 & AI_TARGET_PID=$!;
@@ -764,7 +805,10 @@ launch_targets:
     # 2026-09-08 that `rosrun gazebo_ros gazebo` always starts them in a new
     # session, immune to any pgid kill regardless of target) -- scoped by
     # this target's own world file so an unrelated Gazebo survives.
-    stop_command: "bash -lc 'f=/tmp/sim_connector_quadcopter_launch.pgid; if [ -f $f ]; then kill -- -$(cat $f) 2>/dev/null; rm -f $f; fi; rm -f /tmp/sim_connector_quadcopter_mavproxy_stdin.fifo; pkill -f \"[s]im_vehicle.py -v ArduCopter\" 2>/dev/null; pkill -9 -f \"[m]avproxy.py\" 2>/dev/null; pkill -f \"[a]rducopter -S\" 2>/dev/null; pkill -f [c]amera_rig_controller_ardupilot.py 2>/dev/null; pkill -f [a]i_targeting_controller_ardupilot.py 2>/dev/null; pkill -f [s]im_connector_bridge_gazebo_quadcopter.py 2>/dev/null; pkill -f [m]avlink_relay_vm.py 2>/dev/null; pkill -f [c]amera_bridge_relay_vm.py 2>/dev/null; pkill -f [a]i_targeting_relay_vm.py 2>/dev/null; pkill -f [g]z_reset_listener.py 2>/dev/null; pkill -f \"[g]zserver .*iris_arducopter_cmac\\.world\" 2>/dev/null; pkill -x gzclient 2>/dev/null; sleep 1; if timeout 1 bash -c \"cat < /dev/null > /dev/tcp/127.0.0.1/5771\" 2>/dev/null; then echo \"WARNING: port 5771 still bound after stop -- a MAVProxy/ArduCopter orphan may have survived\" >&2; fi; true'"
+    # pkill -x gzclient removed here too, same concurrent-window reasoning as
+    # gazebo_rover's own stop_command comment -- the pgid kill above already
+    # reaches this target's own gzclient.
+    stop_command: "bash -lc 'export ROS_MASTER_URI=http://localhost:11312; f=/tmp/sim_connector_quadcopter_launch.pgid; if [ -f $f ]; then kill -- -$(cat $f) 2>/dev/null; rm -f $f; fi; rm -f /tmp/sim_connector_quadcopter_mavproxy_stdin.fifo; pkill -f \"[s]im_vehicle.py -v ArduCopter\" 2>/dev/null; pkill -9 -f \"[m]avproxy.py\" 2>/dev/null; pkill -f \"[a]rducopter -S\" 2>/dev/null; pkill -f [c]amera_rig_controller_ardupilot.py 2>/dev/null; pkill -f [a]i_targeting_controller_ardupilot.py 2>/dev/null; pkill -f [s]im_connector_bridge_gazebo_quadcopter.py 2>/dev/null; pkill -f [m]avlink_relay_vm.py 2>/dev/null; pkill -f [c]amera_bridge_relay_vm.py 2>/dev/null; pkill -f [a]i_targeting_relay_vm.py 2>/dev/null; pkill -f [g]z_reset_listener.py 2>/dev/null; pkill -f \"[g]zserver .*iris_arducopter_cmac\\.world\" 2>/dev/null; sleep 1; if timeout 1 bash -c \"cat < /dev/null > /dev/tcp/127.0.0.1/5771\" 2>/dev/null; then echo \"WARNING: port 5771 still bound after stop -- a MAVProxy/ArduCopter orphan may have survived\" >&2; fi; true'"
     # Same "prove THIS target's own world is up" bar as gazebo_rover's own
     # ready_check_command -- /camera_rig/camera/image_raw having a real
     # publisher proves camera_rig_controller_ardupilot.py connected to a
@@ -789,7 +833,7 @@ launch_targets:
     # that file is genuine, one-time proof MAVLink was actually alive at
     # some point in this launch, which none of the process-existence checks
     # above can offer.
-    ready_check_command: "bash -lc \"source /opt/ros/noetic/setup.bash; pgrep -f 'gzserver.*iris_arducopter_cmac.world' > /dev/null && pgrep -f 'sim_vehicle.py -v ArduCopter' > /dev/null && pgrep -f sim_connector_bridge_gazebo_quadcopter.py > /dev/null && rostopic info /camera_rig/camera/image_raw 2>/dev/null | grep -A1 '^Publishers:' | grep -q ' \\* /' && grep -q 'MAVLink heartbeat' ~/.ros/log/sim_connector_bridge_gazebo_quadcopter.log 2>/dev/null\""
+    ready_check_command: "bash -lc \"source /opt/ros/noetic/setup.bash; export ROS_MASTER_URI=http://localhost:11312; pgrep -f 'gzserver.*iris_arducopter_cmac.world' > /dev/null && pgrep -f 'sim_vehicle.py -v ArduCopter' > /dev/null && pgrep -f sim_connector_bridge_gazebo_quadcopter.py > /dev/null && rostopic info /camera_rig/camera/image_raw 2>/dev/null | grep -A1 '^Publishers:' | grep -q ' \\* /' && grep -q 'MAVLink heartbeat' ~/.ros/log/sim_connector_bridge_gazebo_quadcopter.log 2>/dev/null\""
     default_robot_config: flight_robot_4_motor
 
   # Gazebo, Webots, and MuJoCo below all have full launch paths, verified

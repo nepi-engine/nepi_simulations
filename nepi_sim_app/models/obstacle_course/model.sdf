@@ -11,7 +11,8 @@
          (y = +/-3.00): two boundary walls, a two-baffle
          chicane forcing a weave (gap = 0.4m), then a ramp-up/
          plateau/ramp-down bump (rise = 0.35m over 1.991m run,
-         9.97deg) to climb over. -->
+         9.97deg) to climb over, plus any extra obstacles saved
+         onto this specific config. -->
 
     <link name="left_wall">
       <pose>13.000000 3.000000 0.500000 0 0 0</pose>

@@ -89,6 +89,19 @@ OBSTACLE_COURSE_DEFAULT_DIMENSIONS = {
     "ramp_rise_m": 0.35,
     "ramp_angle_deg": 9.97,
     "ramp_plateau_length_m": 1.0,
+    # Per-shape delete flags -- requested live (2026-09-17): "the preset
+    # walls in the obstacle course... should also be deleteable." These are
+    # a genuinely separate, hardcoded pair of walls/baffles (not entries in
+    # the generic 'obstacles' array custom Wall/Circle/Triangle obstacles
+    # use), so "delete" here means "don't build this link at all" rather
+    # than removing an array entry. loadDimensions merges any missing key
+    # in from this default (see its own comment), so an existing saved
+    # config with no such key is unaffected -- defaults to enabled,
+    # identical output to before this field existed.
+    "left_wall_enabled": 1,
+    "right_wall_enabled": 1,
+    "baffle_a_enabled": 1,
+    "baffle_b_enabled": 1,
 }
 
 # A sequence of square gate frames a drone flies up-and-through in order --
@@ -718,11 +731,20 @@ def buildObstacleCourseSdf(dims):
     plateau_x = ramp_up_x + run / 2.0 + plateau_length / 2.0
     ramp_down_x = plateau_x + plateau_length / 2.0 + run / 2.0
 
-    walls = _wallLink("left_wall", wall_center_x, half_corridor, wall_length, wall_thickness, wall_height, "Gazebo/Orange")
-    walls += _wallLink("right_wall", wall_center_x, -half_corridor, wall_length, wall_thickness, wall_height, "Gazebo/Orange")
+    # Each wall/baffle link is skipped entirely when its own *_enabled flag
+    # is falsy -- "deleted" means "never built," not a hidden/zero-size
+    # link, since a zero-size collision box is its own kind of broken.
+    walls = ""
+    if dims.get("left_wall_enabled", 1):
+        walls += _wallLink("left_wall", wall_center_x, half_corridor, wall_length, wall_thickness, wall_height, "Gazebo/Orange")
+    if dims.get("right_wall_enabled", 1):
+        walls += _wallLink("right_wall", wall_center_x, -half_corridor, wall_length, wall_thickness, wall_height, "Gazebo/Orange")
 
-    baffles = _wallLink("baffle_a", baffle_a_x, baffle_a_y, baffle_thickness, baffle_len, wall_height, "Gazebo/Orange")
-    baffles += _wallLink("baffle_b", baffle_b_x, baffle_b_y, baffle_thickness, baffle_len, wall_height, "Gazebo/Orange")
+    baffles = ""
+    if dims.get("baffle_a_enabled", 1):
+        baffles += _wallLink("baffle_a", baffle_a_x, baffle_a_y, baffle_thickness, baffle_len, wall_height, "Gazebo/Orange")
+    if dims.get("baffle_b_enabled", 1):
+        baffles += _wallLink("baffle_b", baffle_b_x, baffle_b_y, baffle_thickness, baffle_len, wall_height, "Gazebo/Orange")
     # baffle box axes are swapped (thin in x, long in y) vs the wall helper's
     # (long in x, thin in y) -- _wallLink's (length, thickness) params map
     # directly since baffles pass (thickness, length) in that order above.
@@ -789,6 +811,12 @@ def buildObstacleCourseSdf(dims):
 
 """
 
+    # Extra circle/wall/triangle obstacles added via the RUI's own editor on
+    # top of this course -- see _renderExtraObstacles' own comment for why
+    # this model needs to read the same 'obstacles' field custom_obstacles
+    # does, not just its own fixed wall/baffle/ramp fields.
+    extra_obstacles = _renderExtraObstacles(dims)
+
     return f"""<?xml version="1.0" ?>
 <sdf version="1.6">
   <model name="obstacle_course">
@@ -802,9 +830,10 @@ def buildObstacleCourseSdf(dims):
          (y = +/-{half_corridor:.2f}): two boundary walls, a two-baffle
          chicane forcing a weave (gap = {baffle_gap}m), then a ramp-up/
          plateau/ramp-down bump (rise = {ramp_rise}m over {run:.3f}m run,
-         {ramp_angle_deg}deg) to climb over. -->
+         {ramp_angle_deg}deg) to climb over, plus any extra obstacles saved
+         onto this specific config. -->
 
-{walls}{baffles}{ramp}  </model>
+{walls}{baffles}{ramp}{extra_obstacles}  </model>
 </sdf>
 """
 
@@ -995,10 +1024,25 @@ OBSTACLE_TYPE_BUILDERS = {
 }
 
 
-def buildCustomObstaclesSdf(dims):
+def _renderExtraObstacles(dims):
+    # Shared by every model that can carry a dimensions.yaml 'obstacles'
+    # list, not just custom_obstacles -- requested live (2026-09-18): a
+    # circle/wall/triangle added via the RUI's Add Wall/Circle/Triangle
+    # editor onto an obstacle_course-based config (e.g. "complexcourse",
+    # "circlecourse") was saved into that config's own 'obstacles' field
+    # (renderCustomObstacleControls in Nepi_IF_Sim.js already offers those
+    # buttons "from every environment's own dimensions editor", regardless
+    # of which model that config maps to) but never actually spawned:
+    # buildObstacleCourseSdf never read this field at all, only
+    # buildCustomObstaclesSdf did -- so a saved custom obstacle on top of
+    # an obstacle_course-based config looked like it did nothing, and the
+    # course looked identical to the plain "Obstacle Course" preset.
+    # Extracted out of buildCustomObstaclesSdf's own inline loop so both
+    # callers render obstacles with IDENTICAL geometry/naming rather than
+    # two copies of the same dispatch drifting apart.
     obstacles = dims.get("obstacles", [])
     if not isinstance(obstacles, list):
-        obstacles = []
+        return ""
     links = ""
     for i, obstacle in enumerate(obstacles):
         if not isinstance(obstacle, dict):
@@ -1008,6 +1052,11 @@ def buildCustomObstaclesSdf(dims):
         if builder is None:
             continue
         links += builder(f"obstacle_{i}_{obstacle_type}", obstacle)
+    return links
+
+
+def buildCustomObstaclesSdf(dims):
+    links = _renderExtraObstacles(dims)
 
     return f"""<?xml version="1.0" ?>
 <sdf version="1.6">

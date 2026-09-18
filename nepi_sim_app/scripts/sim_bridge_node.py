@@ -1198,7 +1198,7 @@ class SimBridgeNode:
           self.resetRover()
           continue
         if cmd.get('type') == 'environment':
-          self.env_spawner.set_active_model(cmd.get('model_name'))
+          self.env_spawner.set_active_model(cmd.get('model_name'), force = bool(cmd.get('force', False)))
           continue
         twist = Twist()
         twist.linear.x = float(cmd.get('linear_x', 0.0))
