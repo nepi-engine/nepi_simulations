@@ -128,10 +128,17 @@ BRIDGE_PORT = 9027
 # (drone_follow_object_mission_script.py, via its cleanup_actions()) can ask
 # the sim to make the chair actually disappear on stop, not just leave it
 # frozen in place. Next free port in the 902x sim-utility block after the
-# AI-targeting bridge's own 9027. Shuts this whole node down after
-# despawning (rather than looping to accept further connections) so a
-# later launch-trigger cleanly respawns a fresh controller + chair, instead
-# of this instance quietly running forever with no target to report.
+# AI-targeting bridge's own 9027.
+#
+# UPDATED (2026-09-21): used to shut this whole node down after despawning,
+# on the assumption a later "launch trigger" (an older, now-dead manual
+# dev-workflow mechanism -- see triggerLifecycleLoop's own comment) would
+# relaunch a fresh instance for the next run. Confirmed live that nothing in
+# the current Deploy-button flow does that, so a teardown followed by a
+# second start left the chair gone for good until gazebo_quadcopter itself
+# was redeployed. TEARDOWN_PORT and START_TRIGGER_PORT are now cycled by one
+# persistent loop (triggerLifecycleLoop) instead of each being a one-shot
+# thread of its own.
 TEARDOWN_PORT = 9029
 
 # Start trigger -- added 2026-09-09, requested live: "the chair object seems
@@ -147,9 +154,9 @@ TEARDOWN_PORT = 9029
 # 9021-9029 are all already assigned in this directory's other scripts, and
 # 9031-9033 are the device-side relay ports mavlink_relay_vm.py/
 # camera_bridge_relay_vm.py/ai_targeting_relay_vm.py already claim). Spawning
-# is now deferred until exactly one client
-# (drone_follow_object_mission_script.py's own __init__) connects here -- see
-# startTriggerServerLoop.
+# is deferred until a client (drone_follow_object_mission_script.py's own
+# __init__) connects here -- see triggerLifecycleLoop, which now cycles this
+# repeatedly rather than accepting it only once.
 START_TRIGGER_PORT = 9030
 
 
@@ -181,14 +188,34 @@ class AiTargetingControllerArdupilot:
     self.client_lock = threading.Lock()
     self.client_conn = None
 
-    # Spawning itself is now deferred to startTriggerServerLoop (see
+    # Spawning itself is deferred to triggerLifecycleLoop (see
     # START_TRIGGER_PORT's own comment) -- this used to start
     # spawnTargetModelRetryLoop unconditionally right here, which is what
     # kept the chair alive for the entire quadcopter sim session regardless
     # of whether a follow-mission script ever ran.
-    self.start_trigger_thread = threading.Thread(target = self.startTriggerServerLoop)
-    self.start_trigger_thread.daemon = True
-    self.start_trigger_thread.start()
+    #
+    # FIXED (2026-09-21): startTriggerServerLoop/teardownServerLoop used to
+    # be two independent single-shot threads, with teardown calling
+    # rospy.signal_shutdown() afterward on the assumption a separate
+    # "launch trigger" (sim_launch_listener.py, an older manual dev-workflow
+    # tool tied to nepi_sitl_dev_env.sh's sitl_gazebo_full -- see that
+    # script's own module docstring) would relaunch a fresh instance for the
+    # next run. That relaunch path is dead in the CURRENT deploy flow (this
+    # node is auto-started exactly once, by gazebo_quadcopter's own
+    # launch_command, not by sim_launch_listener) -- confirmed live
+    # 2026-09-21: stopping drone_follow_object_mission_script.py correctly
+    # despawned the chair and exited this whole node, but starting the
+    # follow script again (without redeploying gazebo_quadcopter) got a
+    # successful "Sim target start triggered" reply (the device-local relay
+    # leg doesn't confirm real delivery) yet no chair, since nothing was
+    # listening on the VM side anymore to spawn one. triggerLifecycleLoop
+    # below cycles start-trigger -> spawn -> teardown-trigger -> despawn
+    # -> repeat in one persistent loop instead, so cancelling and
+    # redeploying the follow script works any number of times across a
+    # single quadcopter deployment.
+    self.trigger_lifecycle_thread = threading.Thread(target = self.triggerLifecycleLoop)
+    self.trigger_lifecycle_thread.daemon = True
+    self.trigger_lifecycle_thread.start()
 
     self.state_pub = rospy.Publisher(MODEL_STATE_TOPIC, ModelState, queue_size = 1)
     self.model_states_sub = rospy.Subscriber(MODEL_STATES_TOPIC, ModelStates, self.modelStatesCb)
@@ -199,10 +226,6 @@ class AiTargetingControllerArdupilot:
     self.server_thread = threading.Thread(target = self.bridgeServerLoop)
     self.server_thread.daemon = True
     self.server_thread.start()
-
-    self.teardown_thread = threading.Thread(target = self.teardownServerLoop)
-    self.teardown_thread.daemon = True
-    self.teardown_thread.start()
 
     rospy.loginfo(PKG_NAME + ": Target '" + TARGET_NAME + "' circling center (" +
                   str(CIRCLE_CENTER_X) + "," + str(CIRCLE_CENTER_Y) + "), radius " +
@@ -258,50 +281,70 @@ class AiTargetingControllerArdupilot:
       rospy.logwarn(PKG_NAME + ": Target model spawn service call failed, will retry: " + str(e))
       return False
 
-  def startTriggerServerLoop(self):
-    """Single-shot: waits for exactly one start trigger (sent by
-    drone_follow_object_mission_script.py's own __init__, or any other
-    follow-mission script wired to SIM_START_PORT the same way) before the
-    target model is spawned at all -- see START_TRIGGER_PORT's own comment.
-    Mirrors teardownServerLoop's accept-once shape, but does NOT shut this
-    node down afterward: receiving a start trigger is the BEGINNING of this
-    node's useful life, not the end. Spawning stays backgrounded with
-    retries (spawnTargetModelRetryLoop, unchanged) rather than a single
-    blocking attempt, for the same gzserver-not-ready-yet race
-    spawnTargetModelRetryLoop's own comment already documents."""
+  def acceptOneTrigger(self, port, log_label):
+    """Binds `port`, accepts exactly one connection, replies OK, then closes
+    both the connection and the listening socket -- shared shape for both
+    trigger legs of triggerLifecycleLoop below. Returns True once a trigger
+    was accepted, False if the bind/accept itself failed (node shutting
+    down or the port is unavailable), so the caller can stop looping."""
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.settimeout(None)
     try:
-      srv.bind(('0.0.0.0', START_TRIGGER_PORT))  # 0.0.0.0: direct-LAN reachable, see sim_bridge_node.py's own bind comment
+      srv.bind(('0.0.0.0', port))  # 0.0.0.0: direct-LAN reachable, see sim_bridge_node.py's own bind comment
       srv.listen(1)
     except Exception as e:
-      rospy.logerr(PKG_NAME + ": Could not bind start-trigger listener on 127.0.0.1:" +
-                   str(START_TRIGGER_PORT) + ": " + str(e))
-      return
+      rospy.logerr(PKG_NAME + ": Could not bind " + log_label + " listener on 127.0.0.1:" +
+                   str(port) + ": " + str(e))
+      return False
     try:
       conn, _ = srv.accept()
     except Exception:
-      return
-    rospy.loginfo(PKG_NAME + ": Start triggered -- spawning target")
+      return False
+    finally:
+      try:
+        srv.close()
+      except Exception:
+        pass
+    rospy.loginfo(PKG_NAME + ": " + log_label + " triggered")
     try:
       conn.sendall(b'OK\n')
     except Exception as e:
-      rospy.logwarn(PKG_NAME + ": Start-trigger response failed: " + str(e))
+      rospy.logwarn(PKG_NAME + ": " + log_label + " response failed: " + str(e))
     finally:
       try:
         conn.close()
       except Exception:
         pass
-      try:
-        srv.close()
-      except Exception:
-        pass
-    self.spawn_thread = threading.Thread(target = self.spawnTargetModelRetryLoop)
-    self.spawn_thread.daemon = True
-    self.spawn_thread.start()
+    return True
+
+  def triggerLifecycleLoop(self):
+    """Cycles start-trigger -> spawn -> teardown-trigger -> despawn -> repeat
+    for as long as this node is alive, instead of the old one-shot-then-
+    shutdown design -- see this method's own call site in __init__ for why."""
+    while not rospy.is_shutdown():
+      if not self.acceptOneTrigger(START_TRIGGER_PORT, "Start"):
+        return
+      # Blocks (with its own internal retry) until the target is confirmed
+      # spawned or the node is shutting down -- see spawnTargetModelRetryLoop's
+      # own comment for why this is a retry loop, not a single attempt.
+      self.spawnTargetModelRetryLoop()
+      if rospy.is_shutdown():
+        return
+      if not self.acceptOneTrigger(TEARDOWN_PORT, "Teardown"):
+        return
+      self.despawnTargetModel()
 
   def despawnTargetModel(self):
+    # Cleared regardless of whether DeleteModel itself reports success --
+    # from the mission's perspective a teardown was requested either way,
+    # and spawnTargetModel's own "already exists, reuse" fallback already
+    # reconciles a stray leftover Gazebo model on the next spawn. Previously
+    # never reset at all, which mattered only once this became a repeatable
+    # cycle (triggerLifecycleLoop above): left True, computeTargetReport
+    # would keep reporting detections against a target no longer in the
+    # world during the gap before the next spawn completes.
+    self.target_spawned = False
     try:
       rospy.wait_for_service(DELETE_MODEL_SERVICE, timeout = GAZEBO_SERVICE_WAIT_SEC)
       delete = rospy.ServiceProxy(DELETE_MODEL_SERVICE, DeleteModel)
@@ -312,41 +355,6 @@ class AiTargetingControllerArdupilot:
         rospy.logwarn(PKG_NAME + ": Target model despawn failed: " + resp.status_message)
     except Exception as e:
       rospy.logwarn(PKG_NAME + ": Target model despawn service call failed: " + str(e))
-
-  def teardownServerLoop(self):
-    """Single-shot: accept exactly one teardown trigger, despawn the
-    target, then shut this whole node down -- see TEARDOWN_PORT's own
-    comment for why a full shutdown (not just despawn-and-keep-running)."""
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.settimeout(None)
-    try:
-      srv.bind(('0.0.0.0', TEARDOWN_PORT))  # 0.0.0.0: direct-LAN reachable, see sim_bridge_node.py's own bind comment
-      srv.listen(1)
-    except Exception as e:
-      rospy.logerr(PKG_NAME + ": Could not bind teardown listener on 127.0.0.1:" +
-                   str(TEARDOWN_PORT) + ": " + str(e))
-      return
-    try:
-      conn, _ = srv.accept()
-    except Exception:
-      return
-    rospy.loginfo(PKG_NAME + ": Teardown triggered -- despawning target and shutting down")
-    try:
-      self.despawnTargetModel()
-      conn.sendall(b'OK\n')
-    except Exception as e:
-      rospy.logwarn(PKG_NAME + ": Teardown response failed: " + str(e))
-    finally:
-      try:
-        conn.close()
-      except Exception:
-        pass
-      try:
-        srv.close()
-      except Exception:
-        pass
-    rospy.signal_shutdown("teardown requested")
 
   def modelStatesCb(self, msg):
     try:
