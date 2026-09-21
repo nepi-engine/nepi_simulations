@@ -262,7 +262,7 @@ else
 
 
     ####################################
-    # 7. Stage this repo's config/ENVIRONMENT/SYSTEM folders under
+    # 7. Stage this repo's config/ENVIRONMENT_CONFIGS/ROBOT_CONFIGS folders under
     # ${HOME}/gazebo -- a plain, user-owned local copy (no sudo/chown
     # gymnastics needed, unlike the /mnt/nepi_storage seed this step used to
     # be -- see the note on step 8 below for why that moved elsewhere).
@@ -277,7 +277,7 @@ else
 
     GAZEBO_HOME_FOLDER=${HOME}/gazebo
 
-    for folder in config ENVIRONMENT SYSTEM; do
+    for folder in config ENVIRONMENT_CONFIGS ROBOT_CONFIGS; do
         echo "Copying ${RESOURCES_FOLDER}/${folder} to ${GAZEBO_HOME_FOLDER}/${folder}"
         mkdir -p ${GAZEBO_HOME_FOLDER}/${folder}
         rsync -ar --delete ${RESOURCES_FOLDER}/${folder}/ ${GAZEBO_HOME_FOLDER}/${folder}/

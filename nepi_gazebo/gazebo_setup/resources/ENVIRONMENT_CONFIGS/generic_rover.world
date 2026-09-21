@@ -1,0 +1,116 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="default">
+    <gui>
+      <camera name="user_camera">
+        <pose>-5 0 1 0 0.2 0</pose>
+      </camera>
+    </gui>
+    <!-- Physics block mirrors iris_arducopter_cmac.world, including the
+         real_time_update_rate cap (1000) -- do not remove it, an uncapped
+         physics rate pins the CPU and runs the sim faster than real time.
+         Deviation from the iris world: contact_max_correcting_vel /
+         contact_surface_layer use Gazebo defaults (100 / 0.001) instead of
+         the iris values (0.1 / 0.0) -- those drone-tuned values let a
+         wheeled vehicle sink into the ground plane so the wheels never
+         grip (rover crawled at ~1/10 of commanded speed). -->
+    <physics type="ode">
+      <ode>
+        <solver>
+          <type>quick</type>
+          <iters>100</iters>
+          <sor>1.0</sor>
+        </solver>
+        <constraints>
+          <cfm>0.0</cfm>
+          <erp>0.2</erp>
+          <contact_max_correcting_vel>100.0</contact_max_correcting_vel>
+          <contact_surface_layer>0.001</contact_surface_layer>
+        </constraints>
+      </ode>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <!-- Inlined rather than `<include><uri>model://ground_plane</uri></include>`
+         so the material can be swapped to something with visible texture --
+         collision/friction (mu=100/mu2=50) copied verbatim from the stock
+         ground_plane model so the wheel-grip tuning above isn't affected.
+         Plain Gazebo/Grey made rover motion almost impossible to judge by eye
+         (no visual reference points on a flat grey plane); Gazebo/Grass gives
+         a textured, high-contrast backdrop without adding any actual terrain
+         complexity. -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <surface>
+            <contact>
+              <collide_bitmask>0xffff</collide_bitmask>
+            </contact>
+            <friction>
+              <ode>
+                <mu>100</mu>
+                <mu2>50</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <cast_shadows>false</cast_shadows>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grass</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- The generic_rover include that used to sit here was removed
+         2026-09-18. Files in ENVIRONMENT_CONFIGS are SCENERY ONLY: the robot
+         is now whatever robot config is selected, which nepi_gazebo.sh spawns
+         into the running world after start. Leaving the rover included here
+         would put a second, unselectable one in the world next to the spawned
+         one. The model itself moved to ROBOT_CONFIGS/generic_rover.
+
+         The note that used to be here is preserved because it is still the
+         governing constraint, it just applies in ROBOT_CONFIGS now: an
+         include must never be wrapped in an outer model element. Found live
+         2026-08-18 under Gazebo Classic 11, that wrapping double-loads the
+         included model's plugins, confirmed via "Tried to advertise a service
+         that is already advertised in this node
+         [/rover/camera/set_parameters]" plus the DiffDrive plugin's own
+         startup log lines appearing twice per launch, and both camera topics
+         ending up with NO active publisher at all afterward despite the model
+         existing in get_world_properties. That is almost certainly the actual
+         mechanism behind the long-reported "can't see some of the cameras in
+         the robot viewer": not a topic-discovery or RUI bug, the publisher
+         genuinely is not there. See ROBOT_CONFIGS/README.md. -->
+
+    <!-- The follow-cam rig used to be spawned here as a standalone model,
+         repositioned every frame via /gazebo/set_model_state by
+         camera_rig_controller.py -- that per-frame kinematic follow had an
+         inherent lag (odom update -> controller tick -> reposition, three
+         independent async loops). Both the first-person and chase cameras
+         are now rigid links welded directly onto generic_rover itself
+         (camera_link / camera_link_chase in generic_rover/model.sdf), so
+         there is nothing left to spawn or follow here. -->
+  </world>
+</sdf>

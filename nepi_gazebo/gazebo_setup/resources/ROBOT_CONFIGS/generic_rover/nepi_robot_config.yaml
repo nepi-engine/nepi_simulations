@@ -1,0 +1,42 @@
+# NEPI capability description for this robot config. Optional: without it the
+# folder is still spawnable, it just renders no controls in the RUI.
+#
+# Read by sim_connector_app_node.py off the simulation share, which is what
+# lets this folder be selectable on its own -- no device-side config edit.
+# See ../README.md for the full field list and the authoring rules.
+#
+# These flags describe what the robot CAN DO, which is what the RUI renders
+# controls from. They are not read by Gazebo and have nothing to do with
+# model.sdf; that file is the robot's geometry and plugins.
+
+display_name: 4-Wheel Rover
+description: >-
+  Four-wheel ground robot with differential drive and two cameras. Local
+  position control only: no attitude command surface, and no global location
+  reference.
+
+wheel_count: 4
+motor_count: 4
+
+# Ground robot: commandable in the plane, but no pose or global-location goto.
+has_goto_position: true
+has_goto_pose: false
+has_goto_location: false
+
+has_go_home: true
+has_set_home: true
+has_go_stop: true
+
+setup_actions:
+- RESET
+- RETURN_HOME
+go_actions: []
+
+# Matches the camera_link / camera_link_chase rigs welded onto this model in
+# model.sdf, so both view modes have something real behind them.
+has_camera_view_control: true
+available_camera_view_modes:
+- SCENE_CAMERA
+- ROBOT_CAMERA
+
+has_environment_controls: true

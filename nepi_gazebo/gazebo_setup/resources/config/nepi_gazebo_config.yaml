@@ -9,47 +9,77 @@
 # the service to notice. Watch GAZEBO_STATE for the outcome. If GAZEBO_START
 # and GAZEBO_STOP are both 1 at once (e.g. both were set before the service
 # cleared the first), GAZEBO_STOP wins.
-# 1 = start requested.
+# 1 = start requested. ALSO THE APPLY STEP: a start is what promotes staged
+# selections (see the Selection section below) into CURRENT_*, then makes the
+# world match them. That is why picking a new environment and a new robot and
+# then asking to start lands as ONE restart carrying both, rather than as a
+# restart per selection.
 GAZEBO_START: 0
 # 1 = stop requested. Takes priority over GAZEBO_START if both are set.
 GAZEBO_STOP: 0
 
 # Selection
 # CURRENT_* is what the simulation is actually using, and is written by the
-# SERVICE -- treat it as read-only from the device side. To change one, put
-# the new name in the matching UPDATE_* field: a non-empty UPDATE_* IS the
-# request, the same way a 1 is the request for the flags above, so there is
-# no separate "updating" flag that could fall out of step with it. The
-# service validates the name, and only on success copies it into CURRENT_*;
-# either way UPDATE_* is cleared back to "" once handled. A name that does
-# not validate leaves CURRENT_* untouched and says why in GAZEBO_LAST_ERROR,
-# so a typo can never leave the simulation pointed at something that isn't
-# there.
+# SERVICE -- treat it as read-only from the device side.
 #
-# The .world file to launch, by filename, within the staged ENVIRONMENT
-# folder (e.g. "iris_arducopter_cmac.world"). Valid = that file exists there.
-# Empty means "no explicit choice": the service falls back to the first
-# .world file in the folder and records what it picked here. Accepting a new
-# value while Gazebo is running RESTARTS it against the new world, since a
-# running gzserver cannot swap worlds in place.
-GAZEBO_CURRENT_ENVIRONMENT: ""
-GAZEBO_UPDATE_ENVIRONMENT: ""
-# The Gazebo model to use, by directory name, within the staged SYSTEM
+# UPDATE_* is a STAGED selection: what the simulation will use once applied.
+# Writing one is inert. The service validates it right away, so a typo is
+# reported through GAZEBO_LAST_ERROR immediately (and the bad value is cleared,
+# so it cannot sit pending and surprise a later apply), but a VALID staged
+# value is left alone and the running simulation is not touched.
+#
+# GAZEBO_START is what applies them: it copies each staged value into its
+# CURRENT_*, clears UPDATE_* back to "", and then brings the world into line.
+# Staged values are re-validated at that moment, because these folders are
+# synced from NEPI storage independently of this service and a config that was
+# valid when staged can be gone by the time it is applied.
+#
+# Changed 2026-09-18. Previously a non-empty UPDATE_* WAS the request and was
+# acted on at the next poll, which meant an operator browsing the environment
+# dropdown restarted Gazebo on every pick, before deciding anything. Staging
+# also lets robot and environment be chosen in either order and applied as one
+# action. GAZEBO_STOP deliberately does not discard staged values: stopping is
+# not a decision to throw away what was picked.
+#
+# The .world file to launch, by filename, within the staged
+# ENVIRONMENT_CONFIGS folder (e.g. "iris_arducopter_cmac.world"). Valid =
+# that file exists there. Empty means "no explicit choice": the service falls
+# back to the first .world file in the folder and records what it picked
+# here. Applying a new value while Gazebo is running RESTARTS it against the
+# new world, since a running gzserver cannot swap worlds in place.
+GAZEBO_CURRENT_ENVIRONMENT_CONFIG: ""
+GAZEBO_UPDATE_ENVIRONMENT_CONFIG: ""
+# The robot config to use, by directory name, within the staged ROBOT_CONFIGS
 # folder (e.g. "generic_rover"). Valid = that directory exists there and
-# contains a model.config. Recorded and validated only -- the whole SYSTEM
-# folder is already on GAZEBO_MODEL_PATH, so naming a model here does not by
-# itself change what the running simulation shows, and does not restart it.
-GAZEBO_CURRENT_MODEL: ""
-GAZEBO_UPDATE_MODEL: ""
-# 1 = also run install_command before starting (or on its own, with
-# start left at 0, to just pre-install without launching). Same
-# clear-on-act convention as GAZEBO_START/GAZEBO_STOP above.
-GAZEBO_INSTALL: 0
+# contains BOTH a model.config and a model.sdf, since model.sdf is what gets
+# spawned.
+#
+# The robot is a model spawned INTO the running world, not part of the .world
+# file (those are scenery only). So unlike the environment pair above, changing
+# this needs NO restart: the service deletes the outgoing robot and spawns the
+# new one against the same running gzserver, which is near-instant. When Gazebo
+# is not running the selection is simply recorded, and the next start spawns it.
+#
+# Staging both this and GAZEBO_UPDATE_ENVIRONMENT_CONFIG and then applying is
+# handled as a single restart carrying the new robot, rather than a restart
+# followed by a swap.
+GAZEBO_CURRENT_ROBOT_CONFIG: ""
+GAZEBO_UPDATE_ROBOT_CONFIG: ""
+# GAZEBO_INSTALL was removed 2026-09-18 along with the whole install step. It
+# had never worked: the service's INSTALL_SCRIPT pointed at an
+# install_gazebo.sh that nothing in nepi_simulations ships, so every install
+# request recorded "no install script at ..." and installed nothing. Gazebo
+# dependencies are installed by nepi_gazebo_setup.sh instead, out of band from
+# this file.
+#
 # Written by the VM-SIDE SERVICE. The device only ever READS this section
 # (the same role status_<request_id>.json plays in the per-request-file
 # protocol).
 # Status
-# idle | installing | starting | running | stopping | failed
+# idle | starting | running | stopping | failed
+# ("installing" was also possible before the install step was removed
+# 2026-09-18; the service still resets it to idle on startup so a config
+# written by an older version cannot pin the state.)
 GAZEBO_STATE: "idle"
 # Empty when there is none.
 GAZEBO_LAST_ERROR: ""

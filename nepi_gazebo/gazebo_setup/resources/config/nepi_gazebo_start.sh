@@ -18,7 +18,7 @@
 ##
 
 # Turnkey entry point for the Gazebo simulation subsystem. Launches Gazebo
-# itself against the world staged in ENVIRONMENT (with SYSTEM added to
+# itself against the world staged in ENVIRONMENT_CONFIGS (with ROBOT_CONFIGS added to
 # GAZEBO_MODEL_PATH so any robot models staged there resolve), records its
 # PID/state into nepi_gazebo_config.yaml (in NEPI storage -- see below),
 # then launches nepi_gazebo.sh (the ongoing poll-config/act-on-change/
@@ -40,7 +40,7 @@ NEPISTORAGE_PASSWORD=$1
 GAZEBO_FOLDER=$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 RESOURCES_FOLDER=$(dirname "${GAZEBO_FOLDER}")
 
-# ENVIRONMENT/SYSTEM are read from ${HOME}/gazebo, not RESOURCES_FOLDER
+# ENVIRONMENT_CONFIGS/ROBOT_CONFIGS are read from ${HOME}/gazebo, not RESOURCES_FOLDER
 # (this nepi_gazebo repo checkout) -- nepi_gazebo_setup.sh stages them there
 # at install time, and nepi_gazebo_sync.sh (below) keeps that copy
 # reconciled against NEPI storage on every start. RESOURCES_FOLDER remains
@@ -49,8 +49,8 @@ RESOURCES_FOLDER=$(dirname "${GAZEBO_FOLDER}")
 # GAZEBO_SIM_FOLDER -- this script and nepi_gazebo.sh both read/write that
 # same storage-side file directly, not a local copy.
 GAZEBO_HOME_FOLDER=${HOME}/gazebo
-GAZEBO_ENVIRONMENT_FOLDER=${GAZEBO_HOME_FOLDER}/ENVIRONMENT
-GAZEBO_SYSTEM_FOLDER=${GAZEBO_HOME_FOLDER}/SYSTEM
+GAZEBO_ENVIRONMENT_CONFIGS_FOLDER=${GAZEBO_HOME_FOLDER}/ENVIRONMENT_CONFIGS
+GAZEBO_ROBOT_CONFIGS_FOLDER=${GAZEBO_HOME_FOLDER}/ROBOT_CONFIGS
 
 GAZEBO_SERVICE=${GAZEBO_FOLDER}/nepi_gazebo.sh
 
@@ -70,7 +70,7 @@ fi
 
 
 ####################################
-# 1. Sync ENVIRONMENT/SYSTEM against NEPI storage before launching, so any
+# 1. Sync ENVIRONMENT_CONFIGS/ROBOT_CONFIGS against NEPI storage before launching, so any
 # changes made on the storage side (e.g. over the network share) are
 # picked up here, and any local changes get pushed back out. Also seeds
 # nepi_gazebo_config.yaml in storage (from the local template) if it isn't
@@ -103,40 +103,40 @@ fi
 # differently (this one direct via nohup, the service via its own poll
 # loop).
 
-# GAZEBO_CURRENT_ENVIRONMENT names the world to launch; it is the same
+# GAZEBO_CURRENT_ENVIRONMENT_CONFIG names the world to launch; it is the same
 # selection the service honours, read straight from the config so both agree
 # on which world is "current". Only when it is unset (or names something that
 # is no longer staged) does this fall back to the first .world in the folder
 # -- which is alphabetical, and therefore a guess. The fallback is recorded
 # below so the guess happens at most once.
-CURRENT_ENVIRONMENT=$(yq e '.GAZEBO_CURRENT_ENVIRONMENT // ""' "$GAZEBO_CONFIG_FILE" 2>/dev/null)
+CURRENT_ENVIRONMENT_CONFIG=$(yq e '.GAZEBO_CURRENT_ENVIRONMENT_CONFIG // ""' "$GAZEBO_CONFIG_FILE" 2>/dev/null)
 
 WORLD_FILE=""
-if [[ -n "$CURRENT_ENVIRONMENT" ]]; then
-    if [[ -f "${GAZEBO_ENVIRONMENT_FOLDER}/${CURRENT_ENVIRONMENT}" ]]; then
-        WORLD_FILE=${GAZEBO_ENVIRONMENT_FOLDER}/${CURRENT_ENVIRONMENT}
+if [[ -n "$CURRENT_ENVIRONMENT_CONFIG" ]]; then
+    if [[ -f "${GAZEBO_ENVIRONMENT_CONFIGS_FOLDER}/${CURRENT_ENVIRONMENT_CONFIG}" ]]; then
+        WORLD_FILE=${GAZEBO_ENVIRONMENT_CONFIGS_FOLDER}/${CURRENT_ENVIRONMENT_CONFIG}
     else
-        echo "Selected environment '${CURRENT_ENVIRONMENT}' is not staged in ${GAZEBO_ENVIRONMENT_FOLDER} -- falling back"
+        echo "Selected environment '${CURRENT_ENVIRONMENT_CONFIG}' is not staged in ${GAZEBO_ENVIRONMENT_CONFIGS_FOLDER} -- falling back"
     fi
 fi
 
 if [[ -z "$WORLD_FILE" ]]; then
-    WORLD_FILE=$(ls ${GAZEBO_ENVIRONMENT_FOLDER}/*.world 2>/dev/null | head -n 1)
+    WORLD_FILE=$(ls ${GAZEBO_ENVIRONMENT_CONFIGS_FOLDER}/*.world 2>/dev/null | head -n 1)
 fi
 
 if [[ -z "$WORLD_FILE" ]]; then
-    echo "No .world file found in ${GAZEBO_ENVIRONMENT_FOLDER} -- stage one before running this script"
+    echo "No .world file found in ${GAZEBO_ENVIRONMENT_CONFIGS_FOLDER} -- stage one before running this script"
     exit 1
 fi
 
 # Record what was actually launched, so the config always reflects reality
 # and the fallback above is not re-guessed on the next start.
-if [[ "$CURRENT_ENVIRONMENT" != "$(basename "$WORLD_FILE")" ]]; then
-    update_yaml_value GAZEBO_CURRENT_ENVIRONMENT "$(basename "$WORLD_FILE")" "$GAZEBO_CONFIG_FILE"
+if [[ "$CURRENT_ENVIRONMENT_CONFIG" != "$(basename "$WORLD_FILE")" ]]; then
+    update_yaml_value GAZEBO_CURRENT_ENVIRONMENT_CONFIG "$(basename "$WORLD_FILE")" "$GAZEBO_CONFIG_FILE"
 fi
 
-export GAZEBO_MODEL_PATH=${GAZEBO_MODEL_PATH}:${GAZEBO_SYSTEM_FOLDER}
-export GAZEBO_RESOURCE_PATH=${GAZEBO_RESOURCE_PATH}:${GAZEBO_ENVIRONMENT_FOLDER}
+export GAZEBO_MODEL_PATH=${GAZEBO_MODEL_PATH}:${GAZEBO_ROBOT_CONFIGS_FOLDER}
+export GAZEBO_RESOURCE_PATH=${GAZEBO_RESOURCE_PATH}:${GAZEBO_ENVIRONMENT_CONFIGS_FOLDER}
 
 if pgrep -f "gazebo --verbose ${WORLD_FILE}" >/dev/null 2>&1; then
     echo "Gazebo is already running against ${WORLD_FILE}"

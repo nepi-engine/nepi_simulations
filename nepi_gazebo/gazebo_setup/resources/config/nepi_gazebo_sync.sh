@@ -84,8 +84,8 @@ SOURCE_FILE=${SOURCE_PATH}/${CONFIG_FILENAME}
 UPDATE_FILE=${UPDATE_PATH}/${CONFIG_FILENAME}
 
 echo "Merging ${CONFIG_FILENAME} keys from ${UPDATE_PATH} into ${SOURCE_PATH}"
-# Create the storage-side folder first, the same way the ENVIRONMENT and
-# SYSTEM blocks below do. Without this, the very first run on a device that
+# Create the storage-side folder first, the same way the ENVIRONMENT_CONFIGS
+# and ROBOT_CONFIGS blocks below do. Without this, the very first run on a device that
 # has no databases/sims/gazebo/config yet fails at the cp ("No such file or
 # directory") -- and since the config file is what nepi_gazebo_start.sh and
 # nepi_gazebo.sh both read, that first run never gets off the ground.
@@ -113,8 +113,8 @@ sudo chmod 775 ${UPDATE_PATH}
 #############################
 # Sync Gazebo environment / world files
 
-SOURCE_PATH=${GAZEBO_SIM_FOLDER}/ENVIRONMENT
-UPDATE_PATH=${GAZEBO_HOME_FOLDER}/ENVIRONMENT
+SOURCE_PATH=${GAZEBO_SIM_FOLDER}/ENVIRONMENT_CONFIGS
+UPDATE_PATH=${GAZEBO_HOME_FOLDER}/ENVIRONMENT_CONFIGS
 
 echo "Syncing files from ${SOURCE_PATH} to ${UPDATE_PATH}"
 if [[ ! -d $SOURCE_PATH ]]; then
@@ -135,8 +135,8 @@ sudo chmod 775 ${UPDATE_PATH}
 #############################
 # Sync Gazebo robot/vehicle model files
 
-SOURCE_PATH=${GAZEBO_SIM_FOLDER}/SYSTEM
-UPDATE_PATH=${GAZEBO_HOME_FOLDER}/SYSTEM
+SOURCE_PATH=${GAZEBO_SIM_FOLDER}/ROBOT_CONFIGS
+UPDATE_PATH=${GAZEBO_HOME_FOLDER}/ROBOT_CONFIGS
 
 echo "Syncing files from ${SOURCE_PATH} to ${UPDATE_PATH}"
 if [[ ! -d $SOURCE_PATH ]]; then
