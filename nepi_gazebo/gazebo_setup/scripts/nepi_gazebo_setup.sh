@@ -178,36 +178,73 @@ else
 
 
     ####################################
-    # 4. Initialize vehicle EEPROM
-    # sim_vehicle.py -w writes the mock EEPROM tables and default parameter
-    # profiles and then idles -- normally you'd Ctrl+C once that settles;
-    # timeout does the same thing non-interactively.
+    # 4. Build ArduCopter SITL and initialize vehicle EEPROM
+    #
+    # This used to be `timeout 900 sim_vehicle.py -w`, which hung the
+    # installer: sim_vehicle.py launches the full interactive sim (an xterm
+    # running arducopter plus a MAVProxy console on this terminal), and
+    # timeout runs its child in a background process group, so the moment
+    # MAVProxy touched the tty it was stopped by SIGTTIN/SIGTTOU -- leaving
+    # the installer parked on "Waiting for heartbeat" for the full 15
+    # minutes, with an xterm -hold window left behind even after. Most
+    # visible on machines where ArduPilot was already built, since the build
+    # then takes ~1s and the hang starts immediately.
+    #
+    # Instead: build with waf directly (runs to completion, no timeout to cut
+    # it short), then run the SITL binary headless with -w just long enough
+    # to see a heartbeat -- by then the wiped EEPROM has been rewritten with
+    # the copter defaults -- and stop it.
 
     echo ""
     echo "########"
-    echo "Initializing ArduCopter SITL parameters"
+    echo "Building ArduCopter SITL and initializing parameters"
     echo "########"
 
-    cd ${ARDUPILOT_FOLDER}/ArduCopter
+    ARDUCOPTER_BIN=${ARDUPILOT_FOLDER}/build/sitl/bin/arducopter
 
-    # On a fresh checkout this call has to COMPILE ArduCopter SITL before it
-    # can write anything, which takes far longer than the 60s this step used
-    # to allow -- the timeout killed waf mid-build every time, leaving no
-    # binary and no EEPROM. Allow enough time for the build, and note that
-    # the exit code alone can't confirm success: timeout returns 124 both
-    # when it interrupts the expected post-init idle AND when it cuts the
-    # build short. Check for the artifacts instead.
-    timeout 900 sim_vehicle.py -w
+    cd ${ARDUPILOT_FOLDER}
+    ./waf configure --board sitl && ./waf copter
 
-    if [[ -f ${ARDUPILOT_FOLDER}/build/sitl/bin/arducopter ]] \
-       && find ${ARDUPILOT_FOLDER}/ArduCopter -maxdepth 2 -name 'eeprom.bin' | grep -q .; then
-        echo "SITL parameter initialization complete"
+    if [[ ! -f $ARDUCOPTER_BIN ]]; then
+        echo "WARNING: the ArduCopter SITL binary was not built"
+        echo "WARNING: re-run './waf configure --board sitl && ./waf copter' from ${ARDUPILOT_FOLDER}"
     else
-        echo "WARNING: SITL parameter initialization did not complete"
-        [[ -f ${ARDUPILOT_FOLDER}/build/sitl/bin/arducopter ]] \
-            || echo "WARNING:   the ArduCopter SITL binary was not built"
-        echo "WARNING: re-run 'sim_vehicle.py -w' from ${ARDUPILOT_FOLDER}/ArduCopter"
-        echo "WARNING:   (let it finish building, then Ctrl+C once it settles)"
+        # eeprom.bin is written to the cwd, which is where sim_vehicle.py
+        # expects it when later run from ArduCopter/
+        cd ${ARDUPILOT_FOLDER}/ArduCopter
+        rm -f eeprom.bin
+
+        ${ARDUCOPTER_BIN} -S -w --model + --speedup 1 \
+            --defaults ${ARDUPILOT_FOLDER}/Tools/autotest/default_params/copter.parm \
+            --sim-address=127.0.0.1 -I0 </dev/null >/dev/null 2>&1 &
+        sitl_pid=$!
+
+        python3 - <<'EOF'
+import sys, time
+from pymavlink import mavutil
+deadline = time.time() + 60
+while True:
+    try:
+        conn = mavutil.mavlink_connection('tcp:127.0.0.1:5760', autoreconnect=False)
+        break
+    except Exception:
+        if time.time() > deadline:
+            sys.exit(1)
+        time.sleep(1)
+sys.exit(0 if conn.wait_heartbeat(timeout=60) else 1)
+EOF
+        heartbeat_rc=$?
+
+        kill $sitl_pid 2>/dev/null
+        wait $sitl_pid 2>/dev/null
+
+        if [[ $heartbeat_rc -eq 0 && -f eeprom.bin ]]; then
+            echo "SITL parameter initialization complete"
+        else
+            echo "WARNING: SITL parameter initialization did not complete"
+            echo "WARNING: re-run 'sim_vehicle.py -w' from ${ARDUPILOT_FOLDER}/ArduCopter"
+            echo "WARNING:   (once it reaches 'Waiting for heartbeat' / params load, Ctrl+C)"
+        fi
     fi
 
 

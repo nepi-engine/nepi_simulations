@@ -19,7 +19,8 @@
       "Bash(cp nepi_sim_app/worlds/iris_arducopter_cmac.world nepi_gazebo/gazebo_setup/resources/ENVIRONMENT/)",
       "Bash(touch nepi_gazebo/gazebo_setup/resources/ENVIRONMENT/.gitkeep nepi_gazebo/gazebo_setup/resources/SYSTEM/.gitkeep)",
       "Bash(bash -c 'source $HOME/.bashrc; echo \"PATH contains autotest? -> $\\(case $PATH in *autotest*\\) echo YES;; *\\) echo NO;; esac\\)\"')",
-      "Bash(findmnt /mnt/nepi_share_storage)"
+      "Bash(findmnt /mnt/nepi_share_storage)",
+      "Bash(ps -o pid,pgid,tpgid,stat,etime,cmd -p 14475,14476,14684,14687,14689)"
     ]
   }
 }
