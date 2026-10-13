@@ -141,8 +141,11 @@ export GAZEBO_RESOURCE_PATH=${GAZEBO_RESOURCE_PATH}:${GAZEBO_ENVIRONMENT_CONFIGS
 if pgrep -f "gazebo --verbose ${WORLD_FILE}" >/dev/null 2>&1; then
     echo "Gazebo is already running against ${WORLD_FILE}"
 else
+    # Same ROS setup nepi_gazebo.sh's start_gazebo does -- see
+    # nepi_gazebo_ros_setup in nepi_gazebo_bash_utils.
+    nepi_gazebo_ros_setup
     echo "Launching Gazebo with world: ${WORLD_FILE}"
-    nohup gazebo --verbose "$WORLD_FILE" >/tmp/nepi_gazebo.log 2>&1 &
+    nohup gazebo --verbose "$WORLD_FILE" $NEPI_GAZEBO_ROS_ARGS >/tmp/nepi_gazebo.log 2>&1 &
     gazebo_pid=$!
 
     sleep 2

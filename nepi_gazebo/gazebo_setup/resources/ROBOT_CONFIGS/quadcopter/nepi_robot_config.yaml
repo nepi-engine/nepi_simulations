@@ -1,0 +1,46 @@
+# NEPI capability description for this robot config -- see ../README.md for
+# the full field list and the authoring rules.
+#
+# This folder's model.config and model.sdf are NOT kept in this repo: they
+# are ArduPilot's own iris_with_ardupilot model (ardupilot_gazebo, which is
+# GPL-3.0), copied in by scripts/nepi_gazebo_setup.sh when it stages
+# ROBOT_CONFIGS into ~/gazebo. Its <include>s (iris_with_standoffs,
+# gimbal_small_2d) resolve through GAZEBO_MODEL_PATH, which that same script
+# extends with ~/ardupilot_gazebo/models.
+#
+# It flies under ArduPilot SITL connected to its ArduPilotPlugin, which
+# nepi_gazebo.sh starts for it while it is spawned (see nepi_driver below).
+
+display_name: Quadcopter
+description: >-
+  Four-motor flight robot (ArduPilot iris). Full attitude plus local and
+  global position control once ArduPilot SITL is running alongside it.
+
+# The NEPI driver that controls this robot. rbx_ardupilot makes the Gazebo
+# service run ArduPilot SITL and nepi_gazebo_mavlink_relay.py for it, which
+# connects SITL to the device's RBX_ARDUPILOT_SITL driver (enabled on the
+# device's Drivers page), so it appears in Devices -> Robots and can be flown.
+nepi_driver: rbx_ardupilot
+
+wheel_count: 0
+motor_count: 4
+
+has_goto_position: true
+has_goto_pose: true
+has_goto_location: true
+
+has_go_home: true
+has_set_home: true
+has_go_stop: true
+
+setup_actions:
+- TAKEOFF
+- LAUNCH
+go_actions: []
+
+has_camera_view_control: true
+available_camera_view_modes:
+- SCENE_CAMERA
+- ROBOT_CAMERA
+
+has_environment_controls: true

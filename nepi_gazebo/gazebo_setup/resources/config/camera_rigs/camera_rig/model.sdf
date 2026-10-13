@@ -1,0 +1,85 @@
+<?xml version='1.0'?>
+<sdf version="1.6">
+  <model name="camera_rig">
+
+    <!-- Standalone camera-only model, deliberately NOT part of generic_rover's
+         kinematic tree: it is repositioned every frame by an external
+         controller (camera_rig_controller.py) publishing to
+         /gazebo/set_model_state, which fights a physics joint if the camera
+         is attached via a fixed joint (see the Phase-6 session summary for
+         the direct test that confirmed set_model_state -- the topic, not the
+         blocking service -- drives a model smoothly at a few Hz with no
+         jitter or snap-back). Static, so it never falls under gravity or
+         reacts to collisions between externally-commanded pose updates. -->
+    <static>true</static>
+
+    <link name="base_link">
+      <visual name="rig_visual">
+        <geometry>
+          <box>
+            <size>0.06 0.1 0.05</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.2 0.8 0.2 1</ambient>
+          <diffuse>0.2 0.8 0.2 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- Look direction is the link's local +X axis (Gazebo camera
+           convention) -- camera_rig_controller.py computes the world
+           orientation quaternion directly (forward-facing in first-person,
+           look-at-the-rover in chase-cam), so no fixed offset is needed here. -->
+      <!-- type="depth" + libgazebo_ros_openni_kinect.so is Gazebo Classic's
+           standard RGBD sensor -- it publishes the same color image_raw as
+           the plain camera sensor did PLUS a 32FC1 raw depth image from the
+           same link, so the depth-map feature (camera_rig_controller_ardupilot.py
+           colorizing via nepi_img.npDepthMap_to_cv2ColorImg when the
+           depth_map_enabled Setting is on) needs no second sensor/model. -->
+      <sensor type="depth" name="camera_rig_sensor">
+        <update_rate>10.0</update_rate>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <camera name="camera_rig_camera">
+          <horizontal_fov>1.3962634</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>100.0</far>
+          </clip>
+        </camera>
+        <plugin name="camera_rig_controller_plugin" filename="libgazebo_ros_openni_kinect.so">
+          <baseline>0.2</baseline>
+          <alwaysOn>true</alwaysOn>
+          <updateRate>10.0</updateRate>
+          <!-- Distinct from the rover's own camera_link/image_raw topic
+               (untouched, still fed by nothing downstream). -->
+          <cameraName>camera_rig/camera</cameraName>
+          <imageTopicName>image_raw</imageTopicName>
+          <cameraInfoTopicName>camera_info</cameraInfoTopicName>
+          <depthImageTopicName>depth/image_raw</depthImageTopicName>
+          <depthImageInfoTopicName>depth/camera_info</depthImageInfoTopicName>
+          <pointCloudTopicName>depth/points</pointCloudTopicName>
+          <frameName>camera_rig_base_link</frameName>
+          <pointCloudCutoff>0.05</pointCloudCutoff>
+          <pointCloudCutoffMax>100.0</pointCloudCutoffMax>
+          <distortionK1>0</distortionK1>
+          <distortionK2>0</distortionK2>
+          <distortionK3>0</distortionK3>
+          <distortionT1>0</distortionT1>
+          <distortionT2>0</distortionT2>
+          <CxPrime>0</CxPrime>
+          <Cx>0</Cx>
+          <Cy>0</Cy>
+          <focalLength>0</focalLength>
+          <hackBaseline>0</hackBaseline>
+        </plugin>
+      </sensor>
+    </link>
+
+  </model>
+</sdf>

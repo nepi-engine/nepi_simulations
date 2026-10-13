@@ -1,0 +1,45 @@
+# The NEPI MuJoCo service's control file: the same request-flag protocol as
+# nepi_gazebo_config.yaml (see that file for the full reasoning), with MUJOCO_
+# keys. The device writes the Control flags and staged selections; the service
+# (nepi_mujoco.sh) writes the Status section and clears each flag once it has
+# acted on it.
+
+# Control
+# 1 = start requested. Also the apply step: a start promotes the staged
+# selections below into CURRENT_* and (re)starts the simulation with them.
+MUJOCO_START: 0
+# 1 = stop requested. Wins over MUJOCO_START if both are set.
+MUJOCO_STOP: 0
+
+# Selection
+# CURRENT_* is what the simulation is using, written by the service. UPDATE_*
+# is a staged choice: writing one changes nothing until MUJOCO_START applies it.
+# The service checks a staged value right away and clears it, with an error in
+# MUJOCO_LAST_ERROR, if it is not valid.
+#
+# The world, by filename within ENVIRONMENT_CONFIGS (e.g. "flat.xml"). Empty
+# means no explicit choice: the service uses the first .xml file there and
+# records it here.
+MUJOCO_CURRENT_ENVIRONMENT_CONFIG: ""
+MUJOCO_UPDATE_ENVIRONMENT_CONFIG: ""
+# The robot, by folder name within ROBOT_CONFIGS (e.g. "generic_rover"). Valid
+# = that folder has a model.xml. Unlike Gazebo, the robot is compiled into the
+# MuJoCo model with the world, so changing it restarts the simulation (which
+# takes about a second).
+MUJOCO_CURRENT_ROBOT_CONFIG: ""
+MUJOCO_UPDATE_ROBOT_CONFIG: ""
+
+# Viewer window on the sim machine: 1 = open it when a display is available,
+# 0 = always run headless. Read at each start.
+MUJOCO_VIEWER: 1
+
+# Status
+# idle | starting | running | stopping | failed
+MUJOCO_STATE: "idle"
+# Empty when there is none.
+MUJOCO_LAST_ERROR: ""
+# PID of the running simulation process, 0 otherwise.
+MUJOCO_PID: 0
+# Unix epoch seconds, updated by the service on every poll. If this stops
+# changing, the device treats the service as unreachable.
+MUJOCO_LAST_POLL: 0

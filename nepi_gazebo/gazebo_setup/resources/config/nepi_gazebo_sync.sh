@@ -51,7 +51,9 @@ else
 fi
 
 ORIG_PWD=$(pwd)
-if nepistorage "$NEPISTORAGE_PASSWORD"; then
+# nepi_gazebo_mount_storage, not nepi_setup's nepistorage: it uses the
+# password and reuses an existing mount (see nepi_gazebo_bash_utils).
+if nepi_gazebo_mount_storage "$NEPISTORAGE_PASSWORD"; then
     GAZEBO_SIM_FOLDER=$(pwd)/databases/sims/gazebo
     cd "$ORIG_PWD"
 else

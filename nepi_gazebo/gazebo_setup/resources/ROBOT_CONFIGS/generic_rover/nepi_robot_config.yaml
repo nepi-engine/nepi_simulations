@@ -15,6 +15,11 @@ description: >-
   position control only: no attitude command surface, and no global location
   reference.
 
+# The NEPI driver that controls this robot. rbx_sim makes the Gazebo service
+# run nepi_gazebo_bridge.py for it and the device's Sim Connector app start
+# the RBX_SIM driver, so it appears in Devices -> Robots and can be driven.
+nepi_driver: rbx_sim
+
 wheel_count: 4
 motor_count: 4
 

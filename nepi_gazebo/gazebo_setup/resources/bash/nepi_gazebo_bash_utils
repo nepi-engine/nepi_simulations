@@ -17,168 +17,104 @@
 ## - mailto:nepi@numurus.com
 ##
 
+# Shell functions for the Gazebo simulation subsystem. The shared NEPI ones it
+# relies on (ask_yes_no, update_yaml_value, sync_yaml_files, NEPI_IP, NEPI_USER)
+# come from nepi_setup's NEPI bash utils, which .bashrc also sources.
 
-if [[ ! -n $CONFIG_USER ]]; then
-    CONFIG_USER=$(id -un)
-    if [[ ${CONFIG_USER} == 'root' ]]; then
-        CONFIG_USER=$SUDO_USER
-    fi
-fi
-if [[ ! -n $CONFIG_USER ]]; then
-    CONFIG_USER=$(id -nu 1000)
-fi
-export CONFIG_USER=$CONFIG_USER
-
-export BASH_FOLDER=$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
-
-if [[ ${NEPI_MODE} == 'SYSTEM' || ${NEPI_MODE} == 'HOST' || ${NEPI_MODE} == 'REMOTE' ]]; then
-  nepi_mode=$NEPI_MODE
-else
-  nepi_mode='SYSTEM'
-fi
-export NEPI_MODE=$nepi_mode
-
-export NEPI_USER=nepi
-export NEPI_IP=192.168.179.103
+export NEPI_GAZEBO_BASH_FOLDER=$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 
 
-function is_valid_internet(){
-    if ! ping -c 2 google.com; then
-        echo "No Internet Connection"
-        return 1
-    else
-        echo "Internet Connected"
+# Mount NEPI storage at /mnt/nepi_share_storage and cd into it -- the same
+# contract as nepi_setup's nepistorage, which nepi_gazebo_sync.sh and
+# nepi_gazebo.sh called before. nepistorage takes no password and always
+# unmounts and remounts, so every call prompted, and nepi_gazebo.sh's call
+# from the background service prompted a second time on the terminal while
+# the share nepi_gazebo_start.sh had just mounted was unmounted under it.
+#
+# This reuses a mount that is already there, so only the first caller ever
+# mounts, and passes the optional password through. It reaches mount.cifs in
+# its PASSWD environment variable, never on a command line, so it does not
+# show in ps. With no password -- or if sudo will not pass PASSWD through --
+# mount.cifs prompts once, as before.
+function nepi_gazebo_mount_storage(){
+    local password=$1
+    local shdrive=/mnt/nepi_share_storage
+    local shfolder=nepi_storage
+
+    if timeout 1 mountpoint -q "$shdrive"; then
+        cd "$shdrive"
         return 0
     fi
-}
-export -f is_valid_internet
 
-
-function ask_yes_no {
-    read -p "$1 ([y]es or [N]o): " choice
-    case "$(echo "$choice" | tr '[:upper:]' '[:lower:]')" in
-        y|yes) echo "yes" ;;
-        *) echo "no" ;;
-    esac
-}
-export -f ask_yes_no
-
-
-function pingn(){
-    ip="${NEPI_IP%%/*}"
-    if ! timeout 1 ping -c 1 -W 1 ${ip} > /dev/null 2>&1; then
-        echo "No NEPI Connection at ${ip}"
-        return 1
-    else
-        echo "NEPI Connected at ${ip}"
+    if [[ ! -d "$shdrive" ]]; then
+        echo "Creating mount folder: ${shdrive}"
+        sudo mkdir -p "$shdrive"
     fi
-}
-export -f pingn
-
-
-function update_yaml_value(){
-    export UPDATE_YAML_KEY=$1
-    export UPDATE_YAML_VAL=$2
-    export UPDATE_YAML_FILE=$3
-
-    yq e -i '.'"$UPDATE_YAML_KEY"' = env(UPDATE_YAML_VAL)' $UPDATE_YAML_FILE
-
-    eval "export $UPDATE_YAML_KEY=\"$UPDATE_YAML_VAL\""
-}
-export -f update_yaml_value
-
-
-function sync_yaml_files(){
-    SOURCE_FILE=$1
-    TARGET_FILE=$2
-    REPLACE_ENTRIES=0
-
-    if [[ ! -f "$SOURCE_FILE" ]]; then
-        echo "Source file does not exist: ${SOURCE_FILE}"
-        return 1
+    local mount_opts="user=${NEPI_USER},uid=$(id -u),gid=$(id -g)"
+    echo "Mounting shared drive at: //${NEPI_IP}/${shfolder} to ${shdrive}"
+    if [[ -n "$password" ]]; then
+        PASSWD="$password" sudo --preserve-env=PASSWD mount.cifs "//${NEPI_IP}/${shfolder}" "$shdrive" -o "$mount_opts"
+    fi
+    if ! timeout 1 mountpoint -q "$shdrive"; then
+        sudo mount.cifs "//${NEPI_IP}/${shfolder}" "$shdrive" -o "$mount_opts"
     fi
 
-    if [[ ! -f "$TARGET_FILE" ]]; then
-        echo "Target file does not exist: ${TARGET_FILE}"
-        return 1
-    fi
-
-    eval_cmd="success=$(python3 ${BASH_FOLDER}/nepi_utils/sync_yaml_files.py $SOURCE_FILE $TARGET_FILE $REPLACE_ENTRIES)"
-    eval "$eval_cmd"
-    success=$(echo ${success})
-
-    if [[ "$success" -ne 1 ]]; then
-        echo "Success = ${success}"
-        return 1
-    fi
-}
-export -f sync_yaml_files
-
-
-function nepistorage() {
-
-  shpassword=$1
-  shfolder=nepi_storage
-  if [[ ${NEPI_MODE} == 'REMOTE' ]]; then
-    sudo -v
-    if pingn; then
-
-      shdrive=/mnt/nepi_share_storage
-
-      #echo "Checking for mountpoint at: ${shdrive}"
-      sudo umount -l $shdrive >/dev/null
-      # timeout 1 mountpoint -q $shdrive
-      # if [[ $? -eq 0 ]]; then
-      #   echo "Unmounting mountpoint at: ${shdrive}"
-      #   timeout 1 sudo umount $shdrivelib
-      # fi
-
-      echo "Checking for mount folder at: ${shdrive}"
-      if [[ ! -d $shdrive ]]; then
-          echo "Creating mount folder: ${shdrive}"
-          sudo mkdir $shdrive
-      fi
-
-
-      echo "Setting mount folder permissions: ${shdrive}"
-      sudo chown ${CONFIG_USER}:${CONFIG_USER} $shdrive
-      echo "Mounting shared drive at: //${NEPI_IP}/${shfolder} to ${shdrive}"
-      if [[ -n $shpassword ]]; then
-        sudo mount.cifs //${NEPI_IP}/${shfolder} $shdrive -o user=$NEPI_USER,password=$shpassword,uid=$(id -u),gid=$(id -g)
-      else
-        sudo mount.cifs //${NEPI_IP}/${shfolder} $shdrive -o user=$NEPI_USER,uid=$(id -u),gid=$(id -g)
-      fi
-
-      if timeout 1 mountpoint -q $shdrive; then
-        cd $shdrive
-        echo $shdrive
+    if timeout 1 mountpoint -q "$shdrive"; then
+        cd "$shdrive"
         return 0
-      else
-        echo "Failed to mount and connect nepi shared folder: ${shdrive}"
-        return 1
-      fi
-    else
-        return 1
     fi
-  else
-    shdrive=/mnt/${shfolder}
-    if [[ -d $shdrive ]]; then
-      cd $shdrive
-      echo $shdrive
-      return 0
-    else
-      echo "Failed to mount and connect nepi shared folder: ${shdrive}"
-
-      return 1
-    fi
-  fi
+    echo "Failed to mount and connect nepi shared folder: ${shdrive}"
+    return 1
 }
+export -f nepi_gazebo_mount_storage
 
-export -f nepistorage
+
+# Make Gazebo ROS-capable, for robots that are driven over ROS: the
+# ROBOT_CONFIGS rover's wheel and camera plugins (libgazebo_ros_diff_drive,
+# libgazebo_ros_openni_kinect) do nothing unless gzserver has ROS initialized,
+# and nepi_gazebo_bridge.py talks to the rover over ROS. Sources the ROS
+# environment into the calling shell, makes sure a ROS master is up, and sets
+# NEPI_GAZEBO_ROS_ARGS to the server plugins every Gazebo launch must add
+# (what `rosrun gazebo_ros gazebo` adds, without changing the process tree
+# nepi_gazebo.sh's stop logic relies on). The master is left running when
+# Gazebo stops -- it is cheap, and restarting it would cut off any other ROS
+# node on this machine.
+#
+# Returns 1, with NEPI_GAZEBO_ROS_ARGS empty, when ROS is not installed:
+# Gazebo still runs, the robot just cannot move. nepi_gazebo_setup.sh installs
+# it on Ubuntu 20.04.
+function nepi_gazebo_ros_setup(){
+    local ros_distro=${NEPI_GAZEBO_ROS_DISTRO:-noetic}
+    local ros_setup=/opt/ros/${ros_distro}/setup.bash
+    export NEPI_GAZEBO_ROS_ARGS=""
+    if [[ ! -f "$ros_setup" ]]; then
+        echo "ROS ${ros_distro} not found (${ros_setup}) -- Gazebo will run without ROS, so robots cannot be driven"
+        return 1
+    fi
+    source "$ros_setup"
+    export GAZEBO_PLUGIN_PATH=${GAZEBO_PLUGIN_PATH}:/opt/ros/${ros_distro}/lib
+
+    if ! timeout 3 rosnode list >/dev/null 2>&1; then
+        echo "Starting ROS master"
+        nohup roscore >/tmp/nepi_gazebo_roscore.log 2>&1 &
+        local waited=0
+        until timeout 3 rosnode list >/dev/null 2>&1; do
+            sleep 1
+            waited=$((waited + 1))
+            if [[ $waited -ge 20 ]]; then
+                echo "ROS master did not come up -- see /tmp/nepi_gazebo_roscore.log"
+                return 1
+            fi
+        done
+    fi
+    export NEPI_GAZEBO_ROS_ARGS="-s libgazebo_ros_paths_plugin.so -s libgazebo_ros_api_plugin.so"
+    return 0
+}
+export -f nepi_gazebo_ros_setup
 
 
 function nepi_gazebo_start(){
-    gazebo_resources_folder=${NEPI_GAZEBO_RESOURCES_FOLDER:-$(dirname "${BASH_FOLDER}")}
+    gazebo_resources_folder=${NEPI_GAZEBO_RESOURCES_FOLDER:-$(dirname "${NEPI_GAZEBO_BASH_FOLDER}")}
     gazebo_start_script=${gazebo_resources_folder}/config/nepi_gazebo_start.sh
 
     if [[ ! -f "$gazebo_start_script" ]]; then
@@ -189,3 +125,35 @@ function nepi_gazebo_start(){
     bash "$gazebo_start_script" "$@"
 }
 export -f nepi_gazebo_start
+
+
+# Stop the Gazebo service and everything it started: Gazebo itself, the rover
+# bridge, and ArduPilot SITL with its relay and camera/reset helpers. The
+# service does the stopping itself, on SIGTERM, with the same functions a stop
+# from the device uses (see the trap in nepi_gazebo.sh) -- only it knows those
+# PIDs. This just signals it and waits. The ROS master is left running, as a
+# device stop also leaves it.
+function nepi_gazebo_stop(){
+    local gazebo_resources_folder=${NEPI_GAZEBO_RESOURCES_FOLDER:-$(dirname "${NEPI_GAZEBO_BASH_FOLDER}")}
+    local gazebo_service=${gazebo_resources_folder}/config/nepi_gazebo.sh
+    local pids waited=0
+
+    # Matched the same way nepi_gazebo_start.sh checks for a running service.
+    pids=$(pgrep -f "bash ${gazebo_service}")
+    if [[ -z "$pids" ]]; then
+        echo "nepi_gazebo service is not running"
+        return 0
+    fi
+    echo "Stopping nepi_gazebo service (pid ${pids//$'\n'/ }) and everything it started"
+    kill -TERM $pids 2>/dev/null
+    while pgrep -f "bash ${gazebo_service}" >/dev/null 2>&1; do
+        sleep 1
+        waited=$((waited + 1))
+        if [[ $waited -ge 30 ]]; then
+            echo "nepi_gazebo service did not stop within 30 s -- see /tmp/nepi_gazebo_service.log"
+            return 1
+        fi
+    done
+    echo "nepi_gazebo service stopped"
+}
+export -f nepi_gazebo_stop

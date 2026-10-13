@@ -24,8 +24,9 @@
 sudo -v
 
 
-# nepi_gazebo_bash_utils must be sourced before the license/user checks
-# below -- nepi_license_check.sh calls ask_yes_no, which it defines.
+# nepi_gazebo_bash_utils is sourced before the license/user checks below.
+# nepi_license_check.sh calls ask_yes_no, which comes from nepi_setup's NEPI
+# bash utils (sourced by .bashrc), not from nepi_gazebo_bash_utils.
 SCRIPT_FOLDER=$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 RESOURCES_FOLDER=$(dirname ${SCRIPT_FOLDER})/resources
 
@@ -264,6 +265,31 @@ EOF
 
 
     ####################################
+    # 5b. Install ROS Noetic with its Gazebo plugins
+    #
+    # The ROBOT_CONFIGS rover drives and sees through ROS Gazebo plugins
+    # (libgazebo_ros_diff_drive, libgazebo_ros_openni_kinect), and
+    # nepi_gazebo_bridge.py -- which connects it to its NEPI driver on the
+    # device -- is a ROS node. Without ROS, Gazebo still runs but a rover
+    # cannot be driven. nepi_gazebo_ros_setup (nepi_gazebo_bash_utils) is what
+    # uses this at launch. Noetic is only packaged for Ubuntu 20.04 (focal).
+
+    echo ""
+    echo "########"
+    echo "Installing ROS Noetic and the Gazebo ROS plugins"
+    echo "########"
+
+    if [[ "$(lsb_release -cs)" == "focal" ]]; then
+        sudo sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
+        wget https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc -O - | sudo apt-key add -
+        sudo apt update
+        sudo apt install -y ros-noetic-ros-base ros-noetic-gazebo-ros-pkgs python3-opencv python3-numpy
+    else
+        echo "WARNING: ROS Noetic needs Ubuntu 20.04 (focal); this is $(lsb_release -cs). Gazebo will run, but rover robots cannot be driven."
+    fi
+
+
+    ####################################
     # 6. Install the ArduPilot-Gazebo bridge plugin
 
     echo ""
@@ -319,6 +345,34 @@ EOF
         mkdir -p ${GAZEBO_HOME_FOLDER}/${folder}
         rsync -ar --delete ${RESOURCES_FOLDER}/${folder}/ ${GAZEBO_HOME_FOLDER}/${folder}/
     done
+
+    # The quadcopter robot config's model files are ArduPilot's own
+    # iris_with_ardupilot (ardupilot_gazebo, built above), copied in here
+    # rather than kept in this repo: ardupilot_gazebo is GPL-3.0. Only the NEPI
+    # capability file (ROBOT_CONFIGS/quadcopter/nepi_robot_config.yaml) lives
+    # in this repo. Copied rather than symlinked as ROBOT_CONFIGS/README.md
+    # suggests for upstream models, because the NEPI device lists robots from
+    # its own storage copy of this folder, where a link into this machine's
+    # home directory would not resolve. Runs after the rsync --delete above,
+    # which would otherwise remove it again.
+    IRIS_MODEL_FOLDER=${ARDUPILOT_GAZEBO_FOLDER}/models/iris_with_ardupilot
+    if [[ -f ${IRIS_MODEL_FOLDER}/model.sdf ]]; then
+        echo "Copying ${IRIS_MODEL_FOLDER} model files into ${GAZEBO_HOME_FOLDER}/ROBOT_CONFIGS/quadcopter"
+        cp ${IRIS_MODEL_FOLDER}/model.config ${IRIS_MODEL_FOLDER}/model.sdf ${GAZEBO_HOME_FOLDER}/ROBOT_CONFIGS/quadcopter/
+        # The service spawns every robot config under its folder name
+        # (nepi_gazebo.sh's `gz model -m quadcopter`), not the SDF's own
+        # <model name="iris_demo">, so the ArduPilotPlugin's IMU lookup by the
+        # iris_demo-scoped name fails and the plugin aborts before it opens
+        # its SITL ports (9002/9003) -- the quad spawns but can never fly. The
+        # bare sensor name is what Gazebo's Model::SensorScopedName() takes,
+        # and it matches whatever the model is named; iris_with_standoffs
+        # carries the only imu_sensor. The rotor jointNames are already
+        # model-relative and need nothing.
+        sed -i 's|<imuName>[^<]*</imuName>|<imuName>imu_sensor</imuName>|' \
+            ${GAZEBO_HOME_FOLDER}/ROBOT_CONFIGS/quadcopter/model.sdf
+    else
+        echo "WARNING: ${IRIS_MODEL_FOLDER} not found -- the quadcopter robot config will not be selectable"
+    fi
 
 
     ####################################

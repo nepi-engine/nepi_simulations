@@ -1,0 +1,28 @@
+<!--
+  Flat ground, the MuJoCo counterpart of Gazebo's flat.world: scenery and
+  physics settings only. The robot is attached at the origin at launch by
+  nepi_mujoco_sim.py.
+
+  implicitfast integrates the wheel motors' damping semi-implicitly. The
+  default Euler integrator diverged within a few steps with velocity motors at
+  this timestep in the old sim_container MuJoCo rover.
+-->
+<mujoco model="flat">
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"/>
+
+  <visual>
+    <global offwidth="1280" offheight="960"/>
+    <headlight ambient="0.3 0.3 0.3" diffuse="0.5 0.5 0.5"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.6 0.7 0.9" rgb2="0.1 0.1 0.2" width="128" height="128"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.2 0.3 0.2" rgb2="0.25 0.35 0.25" width="256" height="256"/>
+    <material name="grid" texture="grid" texrepeat="40 40" reflectance="0.1"/>
+  </asset>
+
+  <worldbody>
+    <light directional="true" diffuse="0.8 0.8 0.8" pos="0 0 10" dir="0 0 -1"/>
+    <geom name="ground" type="plane" size="50 50 0.1" material="grid" friction="1.0 0.005 0.0001"/>
+  </worldbody>
+</mujoco>

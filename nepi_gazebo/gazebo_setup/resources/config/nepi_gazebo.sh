@@ -35,10 +35,12 @@
 #
 # Assumes nepi_gazebo_bash_utils is already sourced by whatever launches
 # this script (same assumption nepi_docker.sh makes of nepi_bash_utils) --
-# update_yaml_value and nepistorage are used as already-exported commands,
-# not defined here. nepi_gazebo_start.sh, the normal way this service gets
-# started, sources it before backgrounding this script, and also exports
-# NEPISTORAGE_PASSWORD so the nepistorage call below doesn't need to prompt.
+# update_yaml_value and nepi_gazebo_mount_storage are used as already-exported
+# commands, not defined here. nepi_gazebo_start.sh, the normal way this service
+# gets started, sources it and mounts NEPI storage before backgrounding this
+# script, so the mount call below finds the share already mounted and neither
+# prompts nor remounts. It also exports NEPISTORAGE_PASSWORD, used only if the
+# share is not mounted when this starts.
 
 GAZEBO_FOLDER=$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 
@@ -83,8 +85,9 @@ STOP_GRACE_SECONDS=5
 #   * A model name that originates from a world-file <include> tag hits a real
 #     Gazebo caching quirk on its first respawn -- confirmed live 2026-09-09
 #     against the camera rigs, which went silently dead after one FOV change
-#     until they were moved to runtime spawning. See the surviving note in
-#     iris_arducopter_cmac.world. Spawning from the start means no name is ever
+#     until they were moved to runtime spawning (the note on it was in the
+#     iris_arducopter_cmac.world this setup used to ship, since removed).
+#     Spawning from the start means no name is ever
 #     include-derived, so that quirk cannot bite.
 #   * It makes environment and robot genuinely independent: N scenery worlds x
 #     M robots, instead of one .world per combination.
@@ -121,18 +124,18 @@ if ! command -v update_yaml_value >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! command -v nepistorage >/dev/null 2>&1; then
-    echo "nepistorage is not defined -- source nepi_gazebo_bash_utils before running this script"
+if ! command -v nepi_gazebo_mount_storage >/dev/null 2>&1; then
+    echo "nepi_gazebo_mount_storage is not defined -- source nepi_gazebo_bash_utils before running this script"
     exit 1
 fi
 
 # Mount NEPI storage once, for the life of this service, and watch the
 # nepi_gazebo_config.yaml that lives there directly -- same pattern
-# nepi_gazebo_sync.sh already uses (nepistorage cd's into the mount on
-# success; capture that via pwd, then restore our own cwd). No local copy
-# of this file is read or written anywhere below.
+# nepi_gazebo_sync.sh already uses (nepi_gazebo_mount_storage cd's into the
+# mount on success; capture that via pwd, then restore our own cwd). No local
+# copy of this file is read or written anywhere below.
 ORIG_PWD=$(pwd)
-if nepistorage "$NEPISTORAGE_PASSWORD"; then
+if nepi_gazebo_mount_storage "$NEPISTORAGE_PASSWORD"; then
     GAZEBO_SIM_FOLDER=$(pwd)/databases/sims/gazebo
     cd "$ORIG_PWD"
 else
@@ -151,26 +154,54 @@ function is_gazebo_running(){
     [[ "$gazebo_pid" -ne 0 ]] && kill -0 "$gazebo_pid" 2>/dev/null
 }
 
+# Every config write goes through here, never `yq -i`. yq -i makes its temp
+# file in /tmp, and the config lives on the device's CIFS share -- another
+# filesystem -- so its rename fails and it falls back to truncating the real
+# file and copying into it. The device then reads an empty file for 10-20 ms
+# on every write, and the Sim Connector app took that as "Gazebo stopped" and
+# killed the rover driver. A temp file beside the config, renamed over it, is
+# never seen half-written.
+function write_yaml_expr(){
+    local yaml_file=$2
+    local tmp_file="${yaml_file}.svc.tmp"
+    if yq e "$1" "$yaml_file" > "$tmp_file" && [[ -s "$tmp_file" ]]; then
+        mv -f "$tmp_file" "$yaml_file"
+    else
+        rm -f "$tmp_file"
+        return 1
+    fi
+}
+
+# Replaces the shared update_yaml_value (which uses yq -i) for this service.
+function update_yaml_value(){
+    export UPDATE_YAML_KEY=$1
+    export UPDATE_YAML_VAL=$2
+    export UPDATE_YAML_FILE=$3
+
+    write_yaml_expr '.'"$UPDATE_YAML_KEY"' = env(UPDATE_YAML_VAL)' "$UPDATE_YAML_FILE"
+
+    eval "export $UPDATE_YAML_KEY=\"$UPDATE_YAML_VAL\""
+}
+
 function clear_gazebo_last_error(){
     # update_yaml_value's yq env() call errors on an empty value ("Value
-    # for env variable ... not provided in env()") -- that's a yq quirk
-    # inside the shared function, not something callable around, so
-    # clear this one field directly instead of going through it.
-    yq e -i '.GAZEBO_LAST_ERROR = ""' "$GAZEBO_CONFIG_FILE"
+    # for env variable ... not provided in env()"), so this one field is
+    # cleared with a literal expression instead.
+    write_yaml_expr '.GAZEBO_LAST_ERROR = ""' "$GAZEBO_CONFIG_FILE"
 }
 
 # Same yq-empty-value quirk as above: clearing an UPDATE_* field back to ""
 # cannot go through update_yaml_value.
 function clear_yaml_field(){
-    yq e -i '.'"$1"' = ""' "$GAZEBO_CONFIG_FILE"
+    write_yaml_expr '.'"$1"' = ""' "$GAZEBO_CONFIG_FILE"
     eval "export $1=''"
 }
 
 # Print the .world file to launch. GAZEBO_CURRENT_ENVIRONMENT_CONFIG names it
 # when set; otherwise fall back to the first .world in the folder -- which is
 # what this service always used to do, and is only a guess, since `ls` is
-# alphabetical (a stray generic_rover.world would quietly outrank
-# iris_arducopter_cmac.world). The caller records whatever this picks, so the
+# alphabetical (aerial_obstacle_course.world sorts ahead of flat.world, so an
+# empty selection lands in the aerial course). The caller records whatever this picks, so the
 # guess happens at most once.
 function resolve_world_file(){
     if [[ -n "$GAZEBO_CURRENT_ENVIRONMENT_CONFIG" ]]; then
@@ -365,10 +396,337 @@ function despawn_robot_config(){
     return 1
 }
 
+# The rover bridge (nepi_gazebo_bridge.py) connects the spawned robot to its
+# NEPI driver on the device. One runs while Gazebo is up with a robot config
+# whose nepi_robot_config.yaml says nepi_driver: rbx_sim, and none otherwise.
+# sync_robot_bridge, called once per poll, is the only thing that decides:
+# every path that changes what is running (start, stop, world restart, robot
+# swap, a crash, a bridge that died) is then covered without each one having
+# to remember the bridge.
+#
+# The device's rbx_sim driver listens on this port for the bridge, UDP and TCP.
+GAZEBO_BRIDGE_PORT=9023
+GAZEBO_BRIDGE_SCRIPT=${GAZEBO_FOLDER}/nepi_gazebo_bridge.py
+GAZEBO_BRIDGE_LOG=/tmp/nepi_gazebo_bridge.log
+# Minimum gap between starts, so a bridge that dies at once is not restarted
+# every second.
+BRIDGE_RESTART_SECONDS=5
+
+bridge_pid=0
+bridge_model=""
+bridge_started_at=0
+
+function robot_config_driver(){
+    local capabilities=${GAZEBO_ROBOT_CONFIGS_FOLDER}/${1}/nepi_robot_config.yaml
+    [[ -f "$capabilities" ]] || return 0
+    yq e '.nepi_driver // ""' "$capabilities" 2>/dev/null
+}
+
+function is_bridge_running(){
+    [[ "$bridge_pid" -ne 0 ]] && kill -0 "$bridge_pid" 2>/dev/null
+}
+
+function stop_robot_bridge(){
+    is_bridge_running || { bridge_pid=0; bridge_model=""; return 0; }
+    echo "Stopping rover bridge (pid ${bridge_pid}, model '${bridge_model}')"
+    # SIGINT is what rospy shuts down cleanly on.
+    kill -INT "$bridge_pid" 2>/dev/null
+    local _
+    for _ in 1 2 3; do
+        kill -0 "$bridge_pid" 2>/dev/null || break
+        sleep 1
+    done
+    kill -0 "$bridge_pid" 2>/dev/null && kill -KILL "$bridge_pid" 2>/dev/null
+    bridge_pid=0
+    bridge_model=""
+}
+
+function start_robot_bridge(){
+    local name=$1
+    if [[ ! -f "$GAZEBO_BRIDGE_SCRIPT" ]]; then
+        echo "Rover bridge not found: ${GAZEBO_BRIDGE_SCRIPT}"
+        return 1
+    fi
+    if [[ -z "$NEPI_GAZEBO_ROS_ARGS" ]]; then
+        # nepi_gazebo_ros_setup already said why (no ROS on this machine).
+        return 1
+    fi
+    echo "Starting rover bridge for '${name}' to ${NEPI_IP%%/*}:${GAZEBO_BRIDGE_PORT}"
+    python3 -u "$GAZEBO_BRIDGE_SCRIPT" --device-host "${NEPI_IP%%/*}" --port "$GAZEBO_BRIDGE_PORT" \
+        --model "$name" >>"$GAZEBO_BRIDGE_LOG" 2>&1 &
+    bridge_pid=$!
+    bridge_model=$name
+    bridge_started_at=$(date +%s)
+}
+
+function sync_robot_bridge(){
+    local wanted=""
+    if is_gazebo_running && [[ -n "$GAZEBO_CURRENT_ROBOT_CONFIG" ]] && \
+       [[ "$(robot_config_driver "$GAZEBO_CURRENT_ROBOT_CONFIG")" == "rbx_sim" ]]; then
+        wanted=$GAZEBO_CURRENT_ROBOT_CONFIG
+    fi
+
+    if is_bridge_running && [[ "$bridge_model" != "$wanted" ]]; then
+        stop_robot_bridge
+    fi
+    if [[ -n "$wanted" ]] && ! is_bridge_running; then
+        if [[ "$bridge_pid" -ne 0 ]]; then
+            echo "Rover bridge for '${bridge_model}' exited -- see ${GAZEBO_BRIDGE_LOG}"
+            bridge_pid=0
+        fi
+        if [[ $(( $(date +%s) - bridge_started_at )) -ge "$BRIDGE_RESTART_SECONDS" ]]; then
+            start_robot_bridge "$wanted"
+        fi
+    fi
+}
+
+# ArduPilot SITL connects a robot config whose nepi_robot_config.yaml says
+# nepi_driver: rbx_ardupilot (the quadcopter) to the device's
+# RBX_ARDUPILOT_SITL driver. Same shape as the rover bridge above: sync_sitl,
+# called once per poll, is the only thing that decides.
+#
+# Two things run. SITL itself, through sim_vehicle.py, which also runs MAVProxy
+# carrying MAVLink out on GAZEBO_SITL_MAVLINK_PORT; and
+# nepi_gazebo_mavlink_relay.py, which dials that port through to the device's
+# SitlMavlinkRelay. SITL flies the spawned model's ArduPilotPlugin over UDP
+# 9002/9003, so it starts only once that model is actually in the world, and
+# restarts whenever Gazebo does: the plugin it was flying went away with it.
+GAZEBO_SITL_MAVLINK_PORT=5771
+# The device's SitlMavlinkRelay (rbx_ardupilot_discovery.py) listens here.
+GAZEBO_SITL_DEVICE_PORT=9031
+GAZEBO_SITL_VEHICLE_SCRIPT=${HOME}/ardupilot/Tools/autotest/sim_vehicle.py
+# nepi_gazebo_setup.sh initializes SITL's parameters (eeprom.bin) here.
+GAZEBO_SITL_VEHICLE_FOLDER=${HOME}/ardupilot/ArduCopter
+GAZEBO_SITL_RELAY_SCRIPT=${GAZEBO_FOLDER}/nepi_gazebo_mavlink_relay.py
+GAZEBO_SITL_LOG=/tmp/nepi_gazebo_sitl.log
+GAZEBO_SITL_RELAY_LOG=/tmp/nepi_gazebo_mavlink_relay.log
+# Longer than the bridge's: a SITL start takes several seconds to settle.
+SITL_RESTART_SECONDS=10
+
+sitl_pid=0
+sitl_model=""
+sitl_gazebo_pid=0
+sitl_started_at=0
+sitl_relay_pid=0
+sitl_relay_started_at=0
+
+# sitl_pid leads its own process group (see start_sitl), so SITL counts as
+# running while anything in that group is -- sim_vehicle.py, MAVProxy or the
+# vehicle binary.
+function is_sitl_running(){
+    [[ "$sitl_pid" -ne 0 ]] && pgrep -g "$sitl_pid" >/dev/null 2>&1
+}
+
+function is_sitl_relay_running(){
+    [[ "$sitl_relay_pid" -ne 0 ]] && kill -0 "$sitl_relay_pid" 2>/dev/null
+}
+
+function stop_sitl_relay(){
+    if is_sitl_relay_running; then
+        kill -TERM "$sitl_relay_pid" 2>/dev/null
+        sleep 1
+        kill -0 "$sitl_relay_pid" 2>/dev/null && kill -KILL "$sitl_relay_pid" 2>/dev/null
+    fi
+    sitl_relay_pid=0
+}
+
+function start_sitl_relay(){
+    if [[ ! -f "$GAZEBO_SITL_RELAY_SCRIPT" ]]; then
+        echo "MAVLink relay not found: ${GAZEBO_SITL_RELAY_SCRIPT}"
+        return 1
+    fi
+    echo "Starting MAVLink relay to ${NEPI_IP%%/*}:${GAZEBO_SITL_DEVICE_PORT}"
+    python3 -u "$GAZEBO_SITL_RELAY_SCRIPT" --device-host "${NEPI_IP%%/*}" \
+        --device-port "$GAZEBO_SITL_DEVICE_PORT" --sitl-port "$GAZEBO_SITL_MAVLINK_PORT" \
+        >>"$GAZEBO_SITL_RELAY_LOG" 2>&1 &
+    sitl_relay_pid=$!
+    sitl_relay_started_at=$(date +%s)
+}
+
+# The quadcopter's camera views and RESET_SIM. Four helpers run alongside SITL
+# and stop with it:
+#   nepi_gazebo_quad_cameras.py    spawns camera_rig and camera_rig_chase, moves
+#                                  them with the quad, serves frames on 9026
+#   nepi_gazebo_camera_relay.py    9026 -> the device's camera relay (9032)
+#   nepi_gazebo_reset_listener.py  RESET_SIM: reset_world, quad back to origin
+#   nepi_gazebo_control_relay.py   the device's reset relay (9034) -> 9021
+# The cameras and the reset listener are ROS nodes, so all four are skipped
+# when this service has no ROS (nepi_gazebo_ros_setup already said why);
+# SITL itself does not need it. If any one exits, all four restart together.
+GAZEBO_QUAD_CAMERAS_SCRIPT=${GAZEBO_FOLDER}/nepi_gazebo_quad_cameras.py
+GAZEBO_QUAD_CAMERA_RELAY_SCRIPT=${GAZEBO_FOLDER}/nepi_gazebo_camera_relay.py
+GAZEBO_QUAD_RESET_SCRIPT=${GAZEBO_FOLDER}/nepi_gazebo_reset_listener.py
+GAZEBO_QUAD_CONTROL_RELAY_SCRIPT=${GAZEBO_FOLDER}/nepi_gazebo_control_relay.py
+GAZEBO_QUAD_CAMERAS_LOG=/tmp/nepi_gazebo_quad_cameras.log
+GAZEBO_QUAD_CAMERA_RELAY_LOG=/tmp/nepi_gazebo_camera_relay.log
+GAZEBO_QUAD_RESET_LOG=/tmp/nepi_gazebo_reset_listener.log
+GAZEBO_QUAD_CONTROL_RELAY_LOG=/tmp/nepi_gazebo_control_relay.log
+# What nepi_gazebo_quad_cameras.py spawns. Deleted when the helpers stop, or
+# a robot swap -- which keeps the world running -- would leave them behind.
+GAZEBO_QUAD_CAMERA_RIGS="camera_rig camera_rig_chase"
+
+quad_helper_pids=()
+quad_helpers_started_at=0
+
+function quad_helpers_all_running(){
+    [[ ${#quad_helper_pids[@]} -gt 0 ]] || return 1
+    local pid
+    for pid in "${quad_helper_pids[@]}"; do
+        kill -0 "$pid" 2>/dev/null || return 1
+    done
+}
+
+function stop_quad_helpers(){
+    local pid _ alive rig
+    if [[ ${#quad_helper_pids[@]} -gt 0 ]]; then
+        echo "Stopping quadcopter camera/reset helpers"
+        for pid in "${quad_helper_pids[@]}"; do
+            kill -TERM "$pid" 2>/dev/null
+        done
+        for _ in 1 2 3; do
+            alive=0
+            for pid in "${quad_helper_pids[@]}"; do
+                kill -0 "$pid" 2>/dev/null && alive=1
+            done
+            [[ "$alive" -eq 0 ]] && break
+            sleep 1
+        done
+        for pid in "${quad_helper_pids[@]}"; do
+            kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
+        done
+    fi
+    quad_helper_pids=()
+    if is_gazebo_running; then
+        for rig in $GAZEBO_QUAD_CAMERA_RIGS; do
+            robot_config_is_spawned "$rig" && gz model -m "$rig" -d >/dev/null 2>&1
+        done
+    fi
+}
+
+function start_quad_helpers(){
+    local name=$1 script
+    if [[ -z "$NEPI_GAZEBO_ROS_ARGS" ]]; then
+        return 1
+    fi
+    for script in "$GAZEBO_QUAD_CAMERAS_SCRIPT" "$GAZEBO_QUAD_CAMERA_RELAY_SCRIPT" \
+                  "$GAZEBO_QUAD_RESET_SCRIPT" "$GAZEBO_QUAD_CONTROL_RELAY_SCRIPT"; do
+        if [[ ! -f "$script" ]]; then
+            echo "Quadcopter helper not found: ${script}"
+            return 1
+        fi
+    done
+    echo "Starting quadcopter camera/reset helpers for '${name}' to ${NEPI_IP%%/*}"
+    python3 -u "$GAZEBO_QUAD_CAMERAS_SCRIPT" --model "$name" >>"$GAZEBO_QUAD_CAMERAS_LOG" 2>&1 &
+    quad_helper_pids+=($!)
+    python3 -u "$GAZEBO_QUAD_RESET_SCRIPT" --model "$name" >>"$GAZEBO_QUAD_RESET_LOG" 2>&1 &
+    quad_helper_pids+=($!)
+    python3 -u "$GAZEBO_QUAD_CAMERA_RELAY_SCRIPT" --device-host "${NEPI_IP%%/*}" \
+        >>"$GAZEBO_QUAD_CAMERA_RELAY_LOG" 2>&1 &
+    quad_helper_pids+=($!)
+    python3 -u "$GAZEBO_QUAD_CONTROL_RELAY_SCRIPT" --device-host "${NEPI_IP%%/*}" \
+        >>"$GAZEBO_QUAD_CONTROL_RELAY_LOG" 2>&1 &
+    quad_helper_pids+=($!)
+    quad_helpers_started_at=$(date +%s)
+}
+
+function stop_sitl(){
+    # The relays first, so the device loses the vehicle the moment the stop
+    # begins.
+    stop_sitl_relay
+    stop_quad_helpers
+    if [[ "$sitl_pid" -ne 0 ]]; then
+        if is_sitl_running; then
+            echo "Stopping ArduPilot SITL (process group ${sitl_pid}, model '${sitl_model}')"
+            kill -TERM -- "-${sitl_pid}" 2>/dev/null
+            local _
+            for _ in 1 2 3; do
+                is_sitl_running || break
+                sleep 1
+            done
+            is_sitl_running && kill -KILL -- "-${sitl_pid}" 2>/dev/null
+        fi
+        # MAVProxy run with --daemon can leave sim_vehicle.py's process
+        # group, so it is also matched by the MAVLink output only this service
+        # gives it.
+        pkill -f "mavproxy.py.*tcpin:0.0.0.0:${GAZEBO_SITL_MAVLINK_PORT}" 2>/dev/null
+    fi
+    sitl_pid=0
+    sitl_model=""
+    sitl_gazebo_pid=0
+}
+
+function start_sitl(){
+    local name=$1
+    if [[ ! -f "$GAZEBO_SITL_VEHICLE_SCRIPT" ]]; then
+        echo "ArduPilot SITL not found: ${GAZEBO_SITL_VEHICLE_SCRIPT} -- run nepi_gazebo_setup.sh"
+        return 1
+    fi
+    echo "Starting ArduPilot SITL for '${name}' (MAVLink out on TCP ${GAZEBO_SITL_MAVLINK_PORT})"
+    # -N runs the binary nepi_gazebo_setup.sh built rather than rebuilding on
+    # every start. DISPLAY is unset because with it sim_vehicle.py opens the
+    # vehicle in a held-open xterm (run_in_terminal_window.sh); without it the
+    # vehicle runs in the background and logs to /tmp/ArduCopter.log. MAVProxy
+    # needs --daemon: with no tty it reads EOF on stdin and shuts everything
+    # down. setsid gives SITL its own process group, so stop_sitl can signal
+    # sim_vehicle.py, MAVProxy and the vehicle together; the exec chain keeps
+    # $! as that group's leader.
+    ( cd "$GAZEBO_SITL_VEHICLE_FOLDER" && exec env -u DISPLAY setsid python3 -u "$GAZEBO_SITL_VEHICLE_SCRIPT" \
+        -N -v ArduCopter -f gazebo-iris --out="tcpin:0.0.0.0:${GAZEBO_SITL_MAVLINK_PORT}" \
+        --mavproxy-args="--daemon" ) </dev/null >>"$GAZEBO_SITL_LOG" 2>&1 &
+    sitl_pid=$!
+    sitl_model=$name
+    sitl_gazebo_pid=$gazebo_pid
+    sitl_started_at=$(date +%s)
+    # The relays retry on their own until SITL's MAVLink port and the camera
+    # server are up.
+    start_sitl_relay
+    start_quad_helpers "$name"
+}
+
+function sync_sitl(){
+    local wanted=""
+    if is_gazebo_running && [[ -n "$GAZEBO_CURRENT_ROBOT_CONFIG" ]] && \
+       [[ "$(robot_config_driver "$GAZEBO_CURRENT_ROBOT_CONFIG")" == "rbx_ardupilot" ]]; then
+        wanted=$GAZEBO_CURRENT_ROBOT_CONFIG
+    fi
+
+    if is_sitl_running && { [[ "$sitl_model" != "$wanted" ]] || [[ "$sitl_gazebo_pid" -ne "$gazebo_pid" ]]; }; then
+        stop_sitl
+    fi
+    if [[ -n "$wanted" ]] && ! is_sitl_running; then
+        if [[ "$sitl_pid" -ne 0 ]]; then
+            echo "ArduPilot SITL for '${sitl_model}' exited -- see ${GAZEBO_SITL_LOG} and /tmp/ArduCopter.log"
+            stop_sitl
+        fi
+        # Checked last: a gz call, so only made when a start is actually due.
+        if [[ $(( $(date +%s) - sitl_started_at )) -ge "$SITL_RESTART_SECONDS" ]] && \
+           robot_config_is_spawned "$wanted"; then
+            start_sitl "$wanted"
+        fi
+    fi
+    if is_sitl_running && ! is_sitl_relay_running && \
+       [[ $(( $(date +%s) - sitl_relay_started_at )) -ge "$SITL_RESTART_SECONDS" ]]; then
+        echo "MAVLink relay exited -- see ${GAZEBO_SITL_RELAY_LOG}"
+        start_sitl_relay
+    fi
+    if is_sitl_running && [[ -n "$NEPI_GAZEBO_ROS_ARGS" ]] && ! quad_helpers_all_running && \
+       [[ $(( $(date +%s) - quad_helpers_started_at )) -ge "$SITL_RESTART_SECONDS" ]]; then
+        echo "A quadcopter camera/reset helper exited -- restarting them (logs: /tmp/nepi_gazebo_quad_cameras.log," \
+             "camera_relay.log, reset_listener.log, control_relay.log)"
+        stop_quad_helpers
+        start_quad_helpers "$sitl_model"
+    fi
+}
+
 # Bring Gazebo down and report idle. No-op if nothing is running, so it is
 # safe to call unconditionally (e.g. from the environment-change restart).
 function stop_gazebo(){
     is_gazebo_running || return 0
+
+    # The bridge and SITL go first, so the device loses the robot the moment
+    # the stop begins rather than after Gazebo has finished winding down.
+    stop_robot_bridge
+    stop_sitl
 
     echo "Stopping Gazebo (pid ${gazebo_pid})"
     update_yaml_value GAZEBO_STATE "stopping" "$GAZEBO_CONFIG_FILE"
@@ -435,7 +793,10 @@ function start_gazebo(){
 
     export GAZEBO_MODEL_PATH=${GAZEBO_MODEL_PATH}:${GAZEBO_ROBOT_CONFIGS_FOLDER}
     export GAZEBO_RESOURCE_PATH=${GAZEBO_RESOURCE_PATH}:${GAZEBO_ENVIRONMENT_CONFIGS_FOLDER}
-    gazebo --verbose "$world_file" &
+    # Checked on every launch, not once at service start, so a ROS master that
+    # went away in between is brought back.
+    nepi_gazebo_ros_setup
+    gazebo --verbose "$world_file" $NEPI_GAZEBO_ROS_ARGS &
     gazebo_pid=$!
     update_yaml_value GAZEBO_PID "$gazebo_pid" "$GAZEBO_CONFIG_FILE"
 
@@ -563,6 +924,30 @@ echo "Watching config file: ${GAZEBO_CONFIG_FILE}"
 
 source "$GAZEBO_CONFIG_LOAD_FILE" "$GAZEBO_CONFIG_FILE" > /dev/null 2>&1
 
+# A bridge left over from an earlier run of this service is not tracked by
+# this one, and a second bridge would send the device two telemetry streams.
+# sync_robot_bridge starts a fresh one if one is wanted.
+pkill -f "$GAZEBO_BRIDGE_SCRIPT" 2>/dev/null
+
+# Same for SITL: an untracked one would hold UDP 9002/9003 and TCP 5760/5771
+# against the next start, and its relay would feed the device a second MAVLink
+# stream. Matched by the exact command lines start_sitl gives them, and
+# sync_sitl starts fresh ones if one is wanted.
+pkill -f "$GAZEBO_SITL_RELAY_SCRIPT" 2>/dev/null
+pkill -f "sim_vehicle.py -N -v ArduCopter -f gazebo-iris" 2>/dev/null
+pkill -f "mavproxy.py.*tcpin:0.0.0.0:${GAZEBO_SITL_MAVLINK_PORT}" 2>/dev/null
+pkill -f "bin/arducopter .*--model gazebo-iris" 2>/dev/null
+# The quadcopter's camera/reset helpers, for the same reasons: an untracked
+# camera node would keep moving its rigs and hold port 9026.
+pkill -f "$GAZEBO_QUAD_CAMERAS_SCRIPT" 2>/dev/null
+pkill -f "$GAZEBO_QUAD_CAMERA_RELAY_SCRIPT" 2>/dev/null
+pkill -f "$GAZEBO_QUAD_RESET_SCRIPT" 2>/dev/null
+pkill -f "$GAZEBO_QUAD_CONTROL_RELAY_SCRIPT" 2>/dev/null
+
+# ROS environment for the whole service, so a bridge can start against a
+# Gazebo this service reattaches to below rather than launched itself.
+nepi_gazebo_ros_setup
+
 gazebo_pid=0
 if [[ "$GAZEBO_PID" -ne 0 ]] && kill -0 "$GAZEBO_PID" 2>/dev/null; then
     echo "Reattaching to already-running Gazebo process ${GAZEBO_PID}"
@@ -575,6 +960,23 @@ elif [[ "$GAZEBO_STATE" == "running" || "$GAZEBO_STATE" == "starting" || "$GAZEB
     update_yaml_value GAZEBO_STATE "idle" "$GAZEBO_CONFIG_FILE"
     update_yaml_value GAZEBO_PID 0 "$GAZEBO_CONFIG_FILE"
 fi
+
+# nepi_gazebo_stop (nepi_gazebo_bash_utils) stops this service with a SIGTERM.
+# Everything the service started goes down with it, through the same stop
+# functions a device stop uses, rather than being left running untracked. The
+# signals are ignored once the stop begins, so a second one cannot start the
+# stop over halfway through. Bash runs this after the current command, so a
+# stop waits out at most the poll sleep or the step in progress.
+function stop_service(){
+    trap '' TERM INT
+    echo "Service stop requested -- stopping everything this service started"
+    stop_robot_bridge
+    stop_sitl
+    stop_gazebo
+    echo "Service stopped"
+    exit 0
+}
+trap stop_service TERM INT
 
 while true; do
     source "$GAZEBO_CONFIG_LOAD_FILE" "$GAZEBO_CONFIG_FILE" > /dev/null 2>&1
@@ -664,6 +1066,9 @@ while true; do
         update_yaml_value GAZEBO_PID 0 "$GAZEBO_CONFIG_FILE"
         gazebo_pid=0
     fi
+
+    sync_robot_bridge
+    sync_sitl
 
     update_yaml_value GAZEBO_LAST_POLL "$(date +%s)" "$GAZEBO_CONFIG_FILE"
 

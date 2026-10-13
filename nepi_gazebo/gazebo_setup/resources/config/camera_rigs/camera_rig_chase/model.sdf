@@ -1,0 +1,80 @@
+<?xml version='1.0'?>
+<sdf version="1.6">
+  <model name="camera_rig_chase">
+
+    <!-- Second standalone camera-only model, alongside camera_rig -- see
+         model.config for why. Repositioned every frame by
+         camera_rig_controller_ardupilot.py via /gazebo/set_model_state, same
+         mechanism camera_rig itself uses (confirmed there to drive a model
+         smoothly at a few Hz with no jitter or snap-back). Static, so it
+         never falls under gravity or reacts to collisions between
+         externally-commanded pose updates. -->
+    <static>true</static>
+
+    <link name="base_link">
+      <visual name="rig_visual">
+        <geometry>
+          <box>
+            <size>0.06 0.1 0.05</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.8 0.5 0.1 1</ambient>
+          <diffuse>0.8 0.5 0.1 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- Look direction is the link's local +X axis (Gazebo camera
+           convention) -- camera_rig_controller_ardupilot.py computes the
+           world orientation quaternion directly (a look-at-the-drone chase
+           pose), so no fixed offset is needed here. -->
+      <!-- See camera_rig/model.sdf for why this is type="depth" +
+           libgazebo_ros_openni_kinect.so rather than a plain camera sensor. -->
+      <sensor type="depth" name="camera_rig_chase_sensor">
+        <update_rate>10.0</update_rate>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <camera name="camera_rig_chase_camera">
+          <horizontal_fov>1.3962634</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>100.0</far>
+          </clip>
+        </camera>
+        <plugin name="camera_rig_chase_controller_plugin" filename="libgazebo_ros_openni_kinect.so">
+          <baseline>0.2</baseline>
+          <alwaysOn>true</alwaysOn>
+          <updateRate>10.0</updateRate>
+          <!-- Distinct from camera_rig's own camera_rig/camera/image_raw
+               topic -- this is what makes both views genuinely simultaneous
+               ROS topics instead of one topic reassigned by a mode toggle. -->
+          <cameraName>camera_rig_chase/camera</cameraName>
+          <imageTopicName>image_raw</imageTopicName>
+          <cameraInfoTopicName>camera_info</cameraInfoTopicName>
+          <depthImageTopicName>depth/image_raw</depthImageTopicName>
+          <depthImageInfoTopicName>depth/camera_info</depthImageInfoTopicName>
+          <pointCloudTopicName>depth/points</pointCloudTopicName>
+          <frameName>camera_rig_chase_base_link</frameName>
+          <pointCloudCutoff>0.05</pointCloudCutoff>
+          <pointCloudCutoffMax>100.0</pointCloudCutoffMax>
+          <distortionK1>0</distortionK1>
+          <distortionK2>0</distortionK2>
+          <distortionK3>0</distortionK3>
+          <distortionT1>0</distortionT1>
+          <distortionT2>0</distortionT2>
+          <CxPrime>0</CxPrime>
+          <Cx>0</Cx>
+          <Cy>0</Cy>
+          <focalLength>0</focalLength>
+          <hackBaseline>0</hackBaseline>
+        </plugin>
+      </sensor>
+    </link>
+
+  </model>
+</sdf>

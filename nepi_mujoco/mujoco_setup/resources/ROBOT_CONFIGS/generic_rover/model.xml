@@ -1,0 +1,71 @@
+<!--
+  4-Wheel Rover for MuJoCo, built to the same measurements as Gazebo's
+  ROBOT_CONFIGS/generic_rover/model.sdf: a 0.4 x 0.3 x 0.1 m, 5 kg chassis
+  with its centre 0.15 m up, four 0.1 m radius x 0.05 m wheels on a 0.34 m
+  track and 0.3 m wheelbase, a mast camera 0.65 m up and a chase camera
+  2.5 m behind.
+
+  Skid-steer, like Gazebo's: each wheel has a velocity motor (rad/s), and the
+  driver turns by running the left and right sides at different speeds.
+  Torque is capped at 25 N*m per wheel, the Gazebo plugin's wheelTorque.
+
+  Only the first body under worldbody is used: nepi_mujoco_sim.py attaches it
+  into the selected world. Physics settings (<option>) belong to the world
+  file, since an attached robot does not bring its own.
+-->
+<mujoco model="generic_rover">
+  <compiler angle="radian"/>
+
+  <worldbody>
+    <body name="base_link" pos="0 0 0.15">
+      <freejoint name="base_free"/>
+      <geom name="chassis" type="box" size="0.2 0.15 0.05" mass="5.0" rgba="0.2 0.5 0.8 1"/>
+
+      <!-- Mast and camera housing: visual only, no collision. -->
+      <geom name="mast" type="cylinder" pos="0.2 0 0.125" size="0.01 0.225"
+            contype="0" conaffinity="0" mass="0.01" rgba="0.6 0.6 0.6 1"/>
+      <geom name="camera_housing" type="box" pos="0.2 0 0.5" size="0.02 0.04 0.02"
+            contype="0" conaffinity="0" mass="0.05" rgba="0.1 0.1 0.1 1"/>
+
+      <!-- MuJoCo cameras look down their local -Z with +Y up, so xyaxes
+           "0 -1 0  0 0 1" points them along the rover's +X. fovy is the
+           VERTICAL field of view: Gazebo's 100 degree horizontal FOV at
+           640x480 is 2*atan(tan(50 deg) * 480/640) = 83.6 degrees vertical. -->
+      <camera name="robot_camera" pos="0.2 0 0.5" xyaxes="0 -1 0 0 0 1" fovy="83.6"/>
+      <!-- Chase camera, pitched 0.583 rad down like Gazebo's camera_link_chase. -->
+      <camera name="scene_camera" pos="-2.5 0 1.5" xyaxes="0 -1 0 0.5506 0 0.8348" fovy="83.6"/>
+
+      <body name="front_left_wheel" pos="0.15 0.17 -0.05">
+        <joint name="front_left_wheel_joint" type="hinge" axis="0 1 0" damping="0.05"/>
+        <geom name="front_left_wheel" type="cylinder" size="0.1 0.025" quat="0.7071068 0.7071068 0 0"
+              mass="0.5" friction="1.2 0.005 0.0001" rgba="0.1 0.1 0.1 1"/>
+      </body>
+      <body name="front_right_wheel" pos="0.15 -0.17 -0.05">
+        <joint name="front_right_wheel_joint" type="hinge" axis="0 1 0" damping="0.05"/>
+        <geom name="front_right_wheel" type="cylinder" size="0.1 0.025" quat="0.7071068 0.7071068 0 0"
+              mass="0.5" friction="1.2 0.005 0.0001" rgba="0.1 0.1 0.1 1"/>
+      </body>
+      <body name="rear_left_wheel" pos="-0.15 0.17 -0.05">
+        <joint name="rear_left_wheel_joint" type="hinge" axis="0 1 0" damping="0.05"/>
+        <geom name="rear_left_wheel" type="cylinder" size="0.1 0.025" quat="0.7071068 0.7071068 0 0"
+              mass="0.5" friction="1.2 0.005 0.0001" rgba="0.1 0.1 0.1 1"/>
+      </body>
+      <body name="rear_right_wheel" pos="-0.15 -0.17 -0.05">
+        <joint name="rear_right_wheel_joint" type="hinge" axis="0 1 0" damping="0.05"/>
+        <geom name="rear_right_wheel" type="cylinder" size="0.1 0.025" quat="0.7071068 0.7071068 0 0"
+              mass="0.5" friction="1.2 0.005 0.0001" rgba="0.1 0.1 0.1 1"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <velocity name="front_left_motor" joint="front_left_wheel_joint" kv="8" ctrlrange="-15 15"
+              forcelimited="true" forcerange="-25 25"/>
+    <velocity name="front_right_motor" joint="front_right_wheel_joint" kv="8" ctrlrange="-15 15"
+              forcelimited="true" forcerange="-25 25"/>
+    <velocity name="rear_left_motor" joint="rear_left_wheel_joint" kv="8" ctrlrange="-15 15"
+              forcelimited="true" forcerange="-25 25"/>
+    <velocity name="rear_right_motor" joint="rear_right_wheel_joint" kv="8" ctrlrange="-15 15"
+              forcelimited="true" forcerange="-25 25"/>
+  </actuator>
+</mujoco>

@@ -1,21 +1,6 @@
 __pycache__/
 *.pyc
 
-# Webots per-checkout window-layout/perspective state, auto-generated next to
-# each .wbt the first time it's opened -- not simulation content.
-*.wbproj
-
-# Raw phone-scan uploads (Stray Scanner exports) feeding scan_to_environment.py --
-# binary, ~100MB+ per scan, grows unbounded as new scans are uploaded. Generated
-# models (sim_container/models/<scan_name>/) are the actual build artifact and
-# stay committable; the raw scan and intermediate meshes behind them do not need
-# to be.
-sim_container/scan_data/raw/
-sim_container/scan_data/processed/*
-!sim_container/scan_data/processed/.gitkeep
-
-# Local cmake/make build output for nepi_gazebo_plugins -- this dev machine
-# builds it directly (no catkin workspace here) for local verification;
-# the actual target workspace runs its own catkin build, this directory is
-# never the thing that gets deployed.
-sim_container/nepi_gazebo_plugins/build/
+# MuJoCo writes this to the working directory on warnings/errors (e.g. a
+# missing GL extension) -- regenerated per run, not simulation content.
+MUJOCO_LOG.TXT

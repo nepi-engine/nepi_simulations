@@ -33,7 +33,7 @@
 # NEPI_MODE is hardcoded to REMOTE below, never SYSTEM/HOST -- unlike
 # nepi_setup, gazebo_setup has exactly one machine role: a person's own
 # separate simulation machine, reaching the NEPI device's storage over the
-# network via nepistorage()'s REMOTE branch (see nepi_gazebo_bash_utils),
+# network via nepi_gazebo_mount_storage (see nepi_gazebo_bash_utils),
 # never the NEPI device itself. So, unlike nepi_bash_setup.sh/
 # remote_bash_setup.sh/docker_bash_setup.sh -- one per mode, dispatched by
 # nepisetup() based on whatever NEPI_MODE the machine was already set up
@@ -46,8 +46,9 @@ export NEPI_MODE='REMOTE'
 SCRIPT_FOLDER=$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 RESOURCES_FOLDER=$(dirname ${SCRIPT_FOLDER})/resources
 
-# nepi_gazebo_bash_utils must be sourced before the license/user checks
-# below -- nepi_license_check.sh calls ask_yes_no, which it defines.
+# nepi_gazebo_bash_utils is sourced before the license/user checks below.
+# nepi_license_check.sh calls ask_yes_no, which comes from nepi_setup's NEPI
+# bash utils (sourced by .bashrc), not from nepi_gazebo_bash_utils.
 NEPI_UTILS_SOURCE=${RESOURCES_FOLDER}/bash/nepi_gazebo_bash_utils
 source $NEPI_UTILS_SOURCE
 export NEPI_MODE='REMOTE'
@@ -103,7 +104,7 @@ sudo cp -p $NEPI_UTILS_FILE_SOURCE $NEPI_UTILS_FILE_DEST
 echo "export NEPI_MODE='REMOTE'" | sudo tee -a $NEPI_UTILS_FILE_DEST > /dev/null
 
 # Also pin where this machine's nepi_gazebo repo checkout actually lives.
-# BASH_FOLDER (computed inside nepi_gazebo_bash_utils itself) resolves to
+# NEPI_GAZEBO_BASH_FOLDER (computed inside nepi_gazebo_bash_utils itself) resolves to
 # $HOME once THIS copy is what gets sourced from .bashrc, not
 # resources/bash in the checkout -- nepi_gazebo_start() (defined in that
 # file) needs this override to find nepi_gazebo_start.sh from an ordinary

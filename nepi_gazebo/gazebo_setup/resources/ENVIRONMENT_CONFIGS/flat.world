@@ -19,10 +19,11 @@
         <pose>-5 0 1 0 0.2 0</pose>
       </camera>
     </gui>
-    <!-- Physics block mirrors iris_arducopter_cmac.world, including the
+    <!-- Physics block mirrors the ArduPilot iris_arducopter_cmac.world
+         this setup used to ship (since removed), including the
          real_time_update_rate cap (1000) -- do not remove it, an uncapped
          physics rate pins the CPU and runs the sim faster than real time.
-         Deviation from the iris world: contact_max_correcting_vel /
+         Deviation from that iris world: contact_max_correcting_vel /
          contact_surface_layer use Gazebo defaults (100 / 0.001) instead of
          the iris values (0.1 / 0.0) -- those drone-tuned values let a
          wheeled vehicle sink into the ground plane so the wheels never

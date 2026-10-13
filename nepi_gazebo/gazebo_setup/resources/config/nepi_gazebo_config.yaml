@@ -42,7 +42,7 @@ GAZEBO_STOP: 0
 # not a decision to throw away what was picked.
 #
 # The .world file to launch, by filename, within the staged
-# ENVIRONMENT_CONFIGS folder (e.g. "iris_arducopter_cmac.world"). Valid =
+# ENVIRONMENT_CONFIGS folder (e.g. "obstacle_course.world"). Valid =
 # that file exists there. Empty means "no explicit choice": the service falls
 # back to the first .world file in the folder and records what it picked
 # here. Applying a new value while Gazebo is running RESTARTS it against the

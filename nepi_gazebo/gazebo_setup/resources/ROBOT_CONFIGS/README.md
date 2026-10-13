@@ -33,6 +33,7 @@ Fields (every one optional; anything omitted is off / zero / empty):
 | Field | Meaning |
 |---|---|
 | `display_name` | Shown in the selector. Defaults to the folder name. |
+| `nepi_driver` | The NEPI driver that controls the robot. `rbx_sim`: while this robot is running, the Gazebo service runs `nepi_gazebo_bridge.py` for it and the device's Sim Connector app starts the RBX_SIM driver, so it shows in Devices -> Robots and can be driven. The model must be the ROS-driven rover shape (`/rover/cmd_vel`, `/rover/odom`, the `/rover/camera*` topics). `rbx_ardupilot`: while this robot is spawned, the Gazebo service runs ArduPilot SITL (`sim_vehicle.py -f gazebo-iris`, MAVLink out on TCP 5771) and `nepi_gazebo_mavlink_relay.py`, which dials the device's RBX_ARDUPILOT_SITL driver on port 9031; that driver must be enabled on the device's Drivers page. The model must carry an ArduPilotPlugin on UDP 9002/9003 whose `imuName` is the bare sensor name (the service renames the model to its folder name, so a model-scoped name never resolves). Alongside SITL the service also runs the quad's camera views and RESET_SIM (`nepi_gazebo_quad_cameras.py`, which spawns the `camera_rig`/`camera_rig_chase` models from `config/camera_rigs/` and moves them with the robot; `nepi_gazebo_reset_listener.py`; and the two relays to device ports 9032 and 9034), all following the model by its folder name. Environments come from the world chosen at Deploy; the driver's environment setting is not used. Omitted: the robot is spawned but nothing connects it to the device. |
 | `description` | Free text. |
 | `wheel_count`, `motor_count` | Integers. `motor_count > 0` enables motor controls. |
 | `has_goto_position`, `has_goto_pose`, `has_goto_location` | Which goto surfaces are commandable. |
@@ -84,7 +85,8 @@ It is tempting to make a config that just pulls in a model installed elsewhere:
 Two independent reasons not to:
 
 1. **It double-loads the included model's plugins.** Found live 2026-08-18
-   under Gazebo Classic 11, in `generic_rover.world`: wrapping an `<include>`
+   under Gazebo Classic 11, in the rover world this setup used to ship (since
+   removed; robots are now spawned, not included): wrapping an `<include>`
    in an outer `<model>` element produced "Tried to advertise a service that is
    already advertised" plus the DiffDrive plugin's startup lines twice per
    launch, and left both camera topics with *no* active publisher despite the

@@ -1,0 +1,117 @@
+#!/bin/bash
+
+##
+## Copyright (c) 2024 Numurus <https://www.numurus.com>.
+##
+## This file is part of nepi setup tools (nepi_setup) repo
+## (see https://github.com/nepi-engine/nepi_setup)
+##
+## License: nepi setup tools are licensed under the "Numurus Software License",
+## which can be found at: <https://numurus.com/wp-content/uploads/Numurus-Software-License-Terms.pdf>
+##
+## Redistributions in source code must retain this top-level comment block.
+## Plagiarizing this software to sidestep the license obligations is illegal.
+##
+## Contact Information:
+## ====================
+## - mailto:nepi@numurus.com
+##
+
+# Shell functions for the MuJoCo simulation subsystem. The shared NEPI ones it
+# relies on (sync_yaml_files, NEPI_IP, NEPI_USER) come from the NEPI bash utils
+# that .bashrc already sources on a machine set up with nepi_gazebo_setup.sh.
+#
+# nepi_mujoco_setup.sh copies this file to ~/.nepi_mujoco_bash_utils and has
+# .bashrc source that copy, with NEPI_MUJOCO_RESOURCES_FOLDER pinned to this
+# checkout.
+
+export NEPI_MUJOCO_BASH_FOLDER=$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
+
+# Mount NEPI storage at /mnt/nepi_share_storage and cd into it -- the same
+# contract as nepi_setup's nepistorage, which nepi_mujoco_sync.sh and
+# nepi_mujoco.sh called before. nepistorage takes no password and always
+# unmounts and remounts, so nepi_mujoco_start prompted twice: once in the sync,
+# and again from the background service after it unmounted the share the sync
+# had just mounted.
+#
+# This reuses a mount that is already there, so only the first caller ever
+# mounts, and passes the optional password through. It reaches mount.cifs in
+# its PASSWD environment variable, never on a command line, so it does not
+# show in ps. With no password -- or if sudo will not pass PASSWD through --
+# mount.cifs prompts once, as before. Same as nepi_gazebo_mount_storage in
+# nepi_gazebo_bash_utils.
+function nepi_mujoco_mount_storage(){
+    local password=$1
+    local shdrive=/mnt/nepi_share_storage
+    local shfolder=nepi_storage
+
+    if timeout 1 mountpoint -q "$shdrive"; then
+        cd "$shdrive"
+        return 0
+    fi
+
+    if [[ ! -d "$shdrive" ]]; then
+        echo "Creating mount folder: ${shdrive}"
+        sudo mkdir -p "$shdrive"
+    fi
+    local mount_opts="user=${NEPI_USER},uid=$(id -u),gid=$(id -g)"
+    echo "Mounting shared drive at: //${NEPI_IP}/${shfolder} to ${shdrive}"
+    if [[ -n "$password" ]]; then
+        PASSWD="$password" sudo --preserve-env=PASSWD mount.cifs "//${NEPI_IP}/${shfolder}" "$shdrive" -o "$mount_opts"
+    fi
+    if ! timeout 1 mountpoint -q "$shdrive"; then
+        sudo mount.cifs "//${NEPI_IP}/${shfolder}" "$shdrive" -o "$mount_opts"
+    fi
+
+    if timeout 1 mountpoint -q "$shdrive"; then
+        cd "$shdrive"
+        return 0
+    fi
+    echo "Failed to mount and connect nepi shared folder: ${shdrive}"
+    return 1
+}
+export -f nepi_mujoco_mount_storage
+
+# Sync with NEPI storage and start the MuJoCo service.
+# Usage: nepi_mujoco_start [NEPISTORAGE_PASSWORD]
+function nepi_mujoco_start(){
+    mujoco_resources_folder=${NEPI_MUJOCO_RESOURCES_FOLDER:-$(dirname "${NEPI_MUJOCO_BASH_FOLDER}")}
+    mujoco_start_script=${mujoco_resources_folder}/config/nepi_mujoco_start.sh
+
+    if [[ ! -f "$mujoco_start_script" ]]; then
+        echo "nepi_mujoco_start.sh not found at: ${mujoco_start_script}"
+        return 1
+    fi
+
+    bash "$mujoco_start_script" "$@"
+}
+export -f nepi_mujoco_start
+
+# Stop the MuJoCo service and the simulation it started (which also carries the
+# bridge to the device). The service stops the simulation itself, on SIGTERM
+# (see the trap in nepi_mujoco.sh); this just signals it and waits.
+# Usage: nepi_mujoco_stop
+function nepi_mujoco_stop(){
+    local mujoco_resources_folder=${NEPI_MUJOCO_RESOURCES_FOLDER:-$(dirname "${NEPI_MUJOCO_BASH_FOLDER}")}
+    local mujoco_service=${mujoco_resources_folder}/config/nepi_mujoco.sh
+    local pids waited=0
+
+    # Matched the same way nepi_mujoco_start.sh checks for a running service.
+    pids=$(pgrep -f "bash ${mujoco_service}")
+    if [[ -z "$pids" ]]; then
+        echo "nepi_mujoco service is not running"
+        return 0
+    fi
+    echo "Stopping nepi_mujoco service (pid ${pids//$'\n'/ }) and the simulation it started"
+    kill -TERM $pids 2>/dev/null
+    while pgrep -f "bash ${mujoco_service}" >/dev/null 2>&1; do
+        sleep 1
+        waited=$((waited + 1))
+        if [[ $waited -ge 30 ]]; then
+            echo "nepi_mujoco service did not stop within 30 s -- see /tmp/nepi_mujoco_service.log"
+            return 1
+        fi
+    done
+    echo "nepi_mujoco service stopped"
+}
+export -f nepi_mujoco_stop
