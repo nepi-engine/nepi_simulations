@@ -111,7 +111,8 @@ echo "export NEPI_MUJOCO_RESOURCES_FOLDER='${RESOURCES_FOLDER}'" >> ${NEPI_UTILS
 chmod 664 ${NEPI_UTILS_FILE_DEST}
 
 BASHRC=${HOME}/.bashrc
-if ! grep -qF "##### Source NEPI MuJoCo Bash Utils #####" "$BASHRC"; then
+# -x: a commented-out block must not count as already installed.
+if ! grep -qxF "##### Source NEPI MuJoCo Bash Utils #####" "$BASHRC"; then
     {
         echo ' '
         echo '##### Source NEPI MuJoCo Bash Utils #####'

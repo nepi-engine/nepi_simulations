@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../nepi_drones"
+		}
+	],
+	"settings": {}
+}

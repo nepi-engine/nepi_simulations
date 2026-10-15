@@ -133,7 +133,10 @@ fi
 sudo chown ${CONFIG_USER}:${CONFIG_USER} $file
 sudo chmod 775 $file
 
-if ! grep -qF "##### Source NEPI Gazebo Bash Utils #####" "$file"; then
+# -x: only a live marker line counts. A commented-out block ("# #####
+# Source ...") would otherwise satisfy the check, so the block is never
+# re-added and nepi_gazebo_start stays undefined in new shells.
+if ! grep -qxF "##### Source NEPI Gazebo Bash Utils #####" "$file"; then
     echo ' ' | sudo tee -a $file > /dev/null
     echo '##### Source NEPI Gazebo Bash Utils #####' | sudo tee -a $file > /dev/null
     echo 'NEPI_GAZEBO_UTILS_FILE='${NEPI_UTILS_FILE_DEST} | sudo tee -a $file > /dev/null
