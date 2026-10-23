@@ -1,0 +1,8 @@
+# Build context for nepi_sim/docker/Dockerfile is the repo root. Only
+# nepi_gazebo/, nepi_mujoco/ and nepi_sim/docker/ are copied into the image.
+.git
+.claude
+**/__pycache__
+**/*.pyc
+**/MUJOCO_LOG.TXT
+*.code-workspace

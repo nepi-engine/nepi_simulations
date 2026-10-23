@@ -46,6 +46,16 @@ function nepi_gazebo_mount_storage(){
         return 0
     fi
 
+    # In the nepi_sim container (nepi_sim/docker) the host mounts the share
+    # and bind-mounts it in; the container has neither the CIFS tools nor the
+    # privilege to mount it here. A missing share is a host problem, so say so
+    # rather than try.
+    if [[ "$NEPI_SIM_CONTAINER" == "1" ]]; then
+        echo "NEPI storage is not mounted at ${shdrive} in this container."
+        echo "Mount it on the host (nepi_simulators_mount) and start the simulator again."
+        return 1
+    fi
+
     if [[ ! -d "$shdrive" ]]; then
         echo "Creating mount folder: ${shdrive}"
         sudo mkdir -p "$shdrive"

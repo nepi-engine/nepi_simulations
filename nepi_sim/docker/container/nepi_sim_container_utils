@@ -1,0 +1,96 @@
+#!/bin/bash
+
+##
+## Copyright (c) 2024 Numurus <https://www.numurus.com>.
+##
+## This file is part of nepi setup tools (nepi_setup) repo
+## (see https://github.com/nepi-engine/nepi_setup)
+##
+## License: nepi setup tools are licensed under the "Numurus Software License",
+## which can be found at: <https://numurus.com/wp-content/uploads/Numurus-Software-License-Terms.pdf>
+##
+## Redistributions in source code must retain this top-level comment block.
+## Plagiarizing this software to sidestep the license obligations is illegal.
+##
+## Contact Information:
+## ====================
+## - mailto:nepi@numurus.com
+##
+
+# The shell environment of the nepi_sim container. On a native sim machine,
+# three things provide it: nepi_setup's remote bash utils (sync_yaml_files,
+# update_yaml_value, NEPI_IP, NEPI_USER), the PATH/GAZEBO_* lines
+# nepi_gazebo_setup.sh appends to .bashrc, and the ~/.nepi_gazebo_bash_utils
+# and ~/.nepi_mujoco_bash_utils copies. The container has none of those, so
+# this file stands in for all three. The entrypoint sources it, and so does
+# the image's .bashrc, so `docker exec -it nepi_simulators bash` gets the same
+# commands (nepi_gazebo_stop, nepi_mujoco_stop, ...) for debugging.
+#
+# NEPI_IP and NEPI_USER come from the host (docker run -e), set by the
+# nepi_simulators commands from ~/.nepi_simulators_config.
+
+if [[ -z "$NEPI_SIM_CONTAINER_UTILS_SOURCED" ]]; then
+    export NEPI_SIM_CONTAINER_UTILS_SOURCED=1
+
+    # What nepi_gazebo_setup.sh appends to .bashrc natively. Guarded above so a
+    # shell that sources this twice does not keep growing the paths.
+    if [[ -f /usr/share/gazebo/setup.sh ]]; then
+        source /usr/share/gazebo/setup.sh
+    fi
+    export GAZEBO_MODEL_PATH=${GAZEBO_MODEL_PATH}:${HOME}/ardupilot_gazebo/models
+    export GAZEBO_RESOURCE_PATH=${GAZEBO_RESOURCE_PATH}:${HOME}/ardupilot_gazebo/worlds
+    # NEPI's default storage path crashes Boost when used as the temp dir.
+    export TMPDIR=/tmp
+fi
+
+export NEPI_MODE=REMOTE
+export NEPI_USER=${NEPI_USER:-nepi}
+export NEPI_GAZEBO_RESOURCES_FOLDER=${NEPI_GAZEBO_RESOURCES_FOLDER:-/opt/nepi_simulations/nepi_gazebo/gazebo_setup/resources}
+export NEPI_MUJOCO_RESOURCES_FOLDER=${NEPI_MUJOCO_RESOURCES_FOLDER:-/opt/nepi_simulations/nepi_mujoco/mujoco_setup/resources}
+
+
+# Merge keys missing from the second YAML file in from the first (creating the
+# second if it does not exist). Called by nepi_gazebo_sync.sh and
+# nepi_mujoco_sync.sh as `sync_yaml_files <template> <storage copy>`. Same
+# contract as nepi_setup's function, through the copy of its helper that
+# already ships in this repo.
+function sync_yaml_files(){
+    python3 "${NEPI_GAZEBO_RESOURCES_FOLDER}/bash/nepi_utils/sync_yaml_files.py" "$1" "$2"
+}
+export -f sync_yaml_files
+
+
+# Set one key in a YAML file and export it as a shell variable. Used by
+# nepi_gazebo_start.sh (the two services define their own copy).
+#
+# nepi_setup's version uses `yq -i`, which on the CIFS share truncates the
+# file and copies into it, so the device can read it empty for 10-20 ms. This
+# is the version the services already use instead: a temp file beside the
+# config, renamed over it, and strenv() for non-numeric values so text with
+# ": " in it still writes.
+function update_yaml_value(){
+    export UPDATE_YAML_KEY=$1
+    export UPDATE_YAML_VAL=$2
+    export UPDATE_YAML_FILE=$3
+    local tmp_file="${UPDATE_YAML_FILE}.svc.tmp"
+    local expr
+    if [[ "$UPDATE_YAML_VAL" =~ ^-?[0-9]+$ ]]; then
+        expr='.'"$UPDATE_YAML_KEY"' = env(UPDATE_YAML_VAL)'
+    else
+        expr='.'"$UPDATE_YAML_KEY"' = strenv(UPDATE_YAML_VAL)'
+    fi
+    if yq e "$expr" "$UPDATE_YAML_FILE" > "$tmp_file" && [[ -s "$tmp_file" ]]; then
+        mv -f "$tmp_file" "$UPDATE_YAML_FILE"
+    else
+        rm -f "$tmp_file"
+        return 1
+    fi
+    eval "export $UPDATE_YAML_KEY=\"$UPDATE_YAML_VAL\""
+}
+export -f update_yaml_value
+
+
+# The simulators' own command sets (nepi_gazebo_start/stop, nepi_mujoco_start/
+# stop, the mount helpers), straight from the image's copy of this repo.
+source "${NEPI_GAZEBO_RESOURCES_FOLDER}/bash/nepi_gazebo_bash_utils"
+source "${NEPI_MUJOCO_RESOURCES_FOLDER}/bash/nepi_mujoco_bash_utils"
